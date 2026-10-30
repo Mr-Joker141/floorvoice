@@ -224,7 +224,8 @@ class Agent:
             {
                 "role": "user",
                 "content": f"Utterance: {text}\n\nContext: "
-                + json.dumps(context, ensure_ascii=False),
+                + json.dumps(context, ensure_ascii=False)
+                + ("\n\nReply language: Tamil (Tamil script)." if lang == "ta" else ""),
             },
         ]
         return state
@@ -261,7 +262,7 @@ class Agent:
                 log.warning("turn over %.1fs budget for %r", self.turn_budget, state.transcript)
                 if state.ctx.posted:
                     return self._done(state)
-                return AgentResult("error", _sorry(state.language))
+                return AgentResult("error", _sorry(state.language, state.transcript))
             assistant: dict[str, Any] = {"role": "assistant", "content": reply.content or ""}
             if reply.tool_calls:
                 assistant["tool_calls"] = [
@@ -310,7 +311,7 @@ class Agent:
                 self._tool_result(state, call.id, {"ok": True})
                 return AgentResult("finish", str(args.get("summary") or "").strip() or "OK.")
         log.warning("agent hit MAX_STEPS for %r", state.transcript)
-        return AgentResult("error", _sorry(state.language))
+        return AgentResult("error", _sorry(state.language, state.transcript))
 
     def _done(self, state: AgentState) -> AgentResult:
         display, speech = readback(state.ctx.posted, state.language)
@@ -321,7 +322,7 @@ class Agent:
         if state.ctx.posted:
             return self._done(state)
         if not content:
-            return AgentResult("error", _sorry(state.language))
+            return AgentResult("error", _sorry(state.language, state.transcript))
         if content.endswith("?"):
             return AgentResult("ask", content)
         return AgentResult("finish", content)
@@ -350,10 +351,13 @@ def _short_json(obj: Any, limit: int = 300) -> str:
     return s if len(s) <= limit else s[:limit] + "…"
 
 
-def _sorry(lang: str) -> str:
+def _sorry(lang: str, heard: str = "") -> str:
+    heard = heard.strip().rstrip(".,")
     if lang == "ta":
-        return "மன்னிக்கவும், அதை பதிவு செய்ய முடியவில்லை. மீண்டும் சொல்லுங்கள்."
-    return "Sorry, I couldn't post that. Please say it again."
+        prefix = f'நான் கேட்டது: "{heard}". ' if heard else ""
+        return prefix + "பதிவு செய்ய முடியவில்லை. பொருள், அளவு, இடம் சொல்லி மீண்டும் சொல்லுங்கள்."
+    prefix = f'I heard "{heard}". ' if heard else ""
+    return prefix + "I couldn't post that. Please say it again with the item, quantity and place."
 
 
 def _fallback_ask(state: AgentState) -> str:

@@ -254,7 +254,9 @@ async def history(limit: int = 50) -> list[dict[str, Any]]:
 @app.get("/warehouses", dependencies=[Depends(require_key)])
 async def warehouses() -> list[dict[str, str]]:
     m = await service().rt.cache.get()
-    return [{"name": w["name"], "label": w["warehouse_name"]} for w in m.warehouses]
+    # Only floor warehouses (those given spoken aliases), not ERPNext's built-in ones.
+    floor = [w for w in m.warehouses if (w.get("voice_aliases") or "").strip()]
+    return [{"name": w["name"], "label": w["warehouse_name"]} for w in floor or m.warehouses]
 
 
 @app.get("/healthz")

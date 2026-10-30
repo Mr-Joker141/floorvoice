@@ -124,3 +124,40 @@ Running log of decisions and of places where reality differed from the docs.
 - Headless Chromium (Playwright image) with a fake microphone playing `samples/*.wav`:
   hold -> partial/final transcript -> Stock Entry posted -> card shown (4.5 s from release);
   typed request -> question with option chips -> tap option -> Material Request posted.
+
+## 2026-10-30 (Day 4) — Tamil reliability, failure handling, demo reset
+
+### Voice Transcribe settings on real Tamil-English phone audio
+`scripts/asr_compare.py`, file endpoint, 3 runs per setting, two phone clips of
+"இரண்டு bearing 6205 store-ல இருந்து line two-க்கு மாத்து":
+- Good clip: default (languageBias Tamil+English, 169 keywords) gave 6205 3/3.
+  Without keywords: "six to zero five" 3/3. Tamil-only / no bias / English-first
+  sometimes gave **6305**, a real item. Keep the defaults.
+- Failed clip: truncated after the number in all 18 runs. Splitting it showed the audio
+  after 3 s contains only "two six two five Z": the rest of the sentence was never
+  recorded (released early or a pause). Digits spoken one by one were misheard.
+- Small sample (2 real Tamil clips). Not an accuracy figure.
+
+### Handling a misheard number
+- `search_items`: if a spoken number matches no item ("bearing 2625Z"), return the item
+  family without the number, flagged `note: spoken number matched no item`.
+- Prompt: in that case, or when a transfer lacks a warehouse, ask at once (no extra
+  search). Replay of "இரண்டு bearing 2625Z": one Spark call, question with the four
+  bearings as options in 2.3–5.2 s (was: 6 s timeout and a generic apology).
+- Timeouts/errors now quote what was heard.
+- Reply language: Spark follows the dominant language of the utterance. Fully Tamil input
+  gets a Tamil question; mostly-English code-switching gets English even with an explicit
+  "Reply language: Tamil" line. Readbacks after a write are server templates, so they are
+  always Tamil for Tamil-script input.
+
+### Demo reset (`scripts/demo_reset.py`)
+- ERPNext v15 refuses to delete a cancelled Stock Entry ("linked with Stock Ledger
+  Entry"), so stock entries and material requests are cancelled only (stock returns to
+  the opening figures; their numbering continues). Job cards and work orders are deleted
+  and their `tabSeries` counters reset, so the seed recreates PO-JOB00001..5 and "job card
+  five" in the script stays valid. Verified: all balances equal opening stock afterwards.
+
+### PWA
+- Outcome is shown on the button (green "Posted ✓" / red "Not posted", vibration) and as a
+  heading on the card; presses with no audio say so ("No sound from the microphone").
+- "My line" lists only floor warehouses (those with voice aliases).

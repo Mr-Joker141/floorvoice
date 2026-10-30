@@ -27,7 +27,7 @@ def test_generic_item_is_a_collision(masters: Masters) -> None:
 
 
 def test_numbers_must_match_exactly(masters: Masters) -> None:
-    assert search_items(masters, "bearing 6206") == []
+    assert all("note" in h for h in search_items(masters, "bearing 6206"))
     assert score("bearing 6205", ["Ball Bearing 6204"]) == 0.0
 
 
@@ -89,3 +89,10 @@ def test_completed_job_card_found_by_number_only(masters: Masters) -> None:
     [jc] = search_job_cards(masters, "job card 4")
     assert (jc["status"], jc["pending_qty"]) == ("Completed", 0)
     assert [j["name"] for j in search_job_cards(masters, "pump")] == ["PO-JOB00001"]
+
+
+def test_unknown_number_falls_back_to_family(masters: Masters) -> None:
+    hits = search_items(masters, "bearing 2625Z")
+    assert codes(hits) == ["BRG-6201", "BRG-6204", "BRG-6205", "BRG-6305"]
+    assert all(h["note"] == "spoken number matched no item" for h in hits)
+    assert search_items(masters, "unobtainium 9999") == []

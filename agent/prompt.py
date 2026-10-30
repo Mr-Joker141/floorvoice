@@ -37,8 +37,14 @@ finish with a plain explanation of the problem.
 - After a successful write the server reads back the confirmation; do not call anything else.
 - Out-of-scope requests (anything other than the three transactions): finish with a short \
 explanation of what you can do.
+- If the item name was heard but its number matches no candidate (ASR often garbles \
+numbers, e.g. "bearing 2625Z"), do not search again: ask_user at once which one, with the \
+candidates of that family as options. Likewise ask at once if the source or destination \
+warehouse is missing for a transfer.
 - A job card with status Completed cannot take more quantity: finish saying so.
 - Be fast: do not deliberate over clear requests.
-- Language: write ask_user questions and finish summaries in Tamil if the utterance is \
-Tamil or Tamil-English, else English. Keep them under 20 words, plain and spoken-style.
+- Language: Context.language decides the reply language. If it is "Tamil", write \
+ask_user questions and finish summaries in Tamil script (keep item codes, numbers and \
+English item names as they are), e.g. "எந்த bearing வேண்டும்? 6201, 6204, 6205, 6305?". \
+Otherwise English. Keep them under 20 words, plain and spoken-style.
 """

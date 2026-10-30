@@ -117,6 +117,22 @@ def _ranked(scored: list[tuple[float, dict[str, Any]]]) -> list[tuple[float, dic
 
 
 def search_items(m: Masters, query: str) -> list[dict[str, Any]]:
+    """Fuzzy item search. If a spoken number matches no item (often an ASR mishearing,
+    e.g. "bearing 2625Z" for 6205), fall back to the same item family without the number
+    and flag the results so the agent asks which one was meant."""
+    hits = _search_items(m, query)
+    if hits:
+        return hits
+    words = [t for t in _WORD.findall(query) if not any(ch.isdigit() for ch in t)]
+    if len(words) == len(_WORD.findall(query)) or not words:
+        return []
+    return [
+        {**h, "match": min(h["match"], 0.6), "note": "spoken number matched no item"}
+        for h in _search_items(m, " ".join(words))
+    ]
+
+
+def _search_items(m: Masters, query: str) -> list[dict[str, Any]]:
     scored = [
         (
             score(query, [i["item_code"], i["item_name"], *split_aliases(i.get("voice_aliases"))]),
