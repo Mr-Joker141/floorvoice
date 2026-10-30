@@ -68,3 +68,17 @@ async def load_keywords(erp: ErpClient) -> list[str]:
     return keywords_from_masters(
         await load_items(erp), await load_warehouses(erp), await load_open_job_cards(erp)
     )
+
+
+async def load_stock(erp: ErpClient) -> dict[str, dict[str, float]]:
+    """item_code -> {warehouse: actual_qty} for positive balances (from Bin)."""
+    bins = await erp.get_list(
+        "Bin",
+        fields=["item_code", "warehouse", "actual_qty"],
+        filters=[["actual_qty", ">", 0]],
+        limit=5000,
+    )
+    stock: dict[str, dict[str, float]] = {}
+    for b in bins:
+        stock.setdefault(b["item_code"], {})[b["warehouse"]] = float(b["actual_qty"])
+    return stock

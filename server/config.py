@@ -24,6 +24,10 @@ class Settings:
     erp_api_key: str
     erp_api_secret: str
     data_dir: Path
+    erp_company: str
+    erp_default_warehouse: str
+    erp_timezone: str
+    agent_reasoning: str
 
 
 def get_settings() -> Settings:
@@ -33,4 +37,8 @@ def get_settings() -> Settings:
         erp_api_key=os.environ.get("ERP_API_KEY", ""),
         erp_api_secret=os.environ.get("ERP_API_SECRET", ""),
         data_dir=Path(os.environ.get("FLOORVOICE_DATA", ROOT / "data")),
+        erp_company=os.environ.get("ERP_COMPANY", "FloorVoice Demo Works"),
+        erp_default_warehouse=os.environ.get("ERP_DEFAULT_WAREHOUSE", "Stores - FVD"),
+        erp_timezone=os.environ.get("ERP_TIMEZONE", "Asia/Colombo"),
+        agent_reasoning=os.environ.get("AGENT_REASONING", "low"),
     )

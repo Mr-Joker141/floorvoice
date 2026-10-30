@@ -42,14 +42,14 @@ FG = "Products"
 
 # (item_code, item_name, item_group, uom, valuation_rate, aliases)
 ITEMS: list[tuple[str, str, str, str, float, list[str]]] = [
-    ("BRG-6201", "Ball Bearing 6201", RM, "Nos", 420, ["bearing 6201", "பேரிங் 6201"]),
-    ("BRG-6204", "Ball Bearing 6204", RM, "Nos", 610, ["bearing 6204", "பேரிங் 6204"]),
-    ("BRG-6205", "Ball Bearing 6205", RM, "Nos", 680, ["bearing 6205", "பேரிங் 6205"]),
-    ("BRG-6305", "Ball Bearing 6305", RM, "Nos", 950, ["bearing 6305", "பேரிங் 6305"]),
-    ("BLT-M8X30", "Hex Bolt M8x30", RM, "Nos", 25, ["bolt M8", "M8 bolt", "போல்ட் M8"]),
-    ("BLT-M10X40", "Hex Bolt M10x40", RM, "Nos", 40, ["bolt M10", "M10 bolt", "போல்ட் M10"]),
-    ("NUT-M8", "Hex Nut M8", RM, "Nos", 8, ["nut M8", "நட் M8"]),
-    ("NUT-M10", "Hex Nut M10", RM, "Nos", 12, ["nut M10", "நட் M10"]),
+    ("BRG-6201", "Ball Bearing 6201", RM, "Nos", 420, ["bearing 6201", "பேரிங்", "பேரிங் 6201"]),
+    ("BRG-6204", "Ball Bearing 6204", RM, "Nos", 610, ["bearing 6204", "பேரிங்", "பேரிங் 6204"]),
+    ("BRG-6205", "Ball Bearing 6205", RM, "Nos", 680, ["bearing 6205", "பேரிங்", "பேரிங் 6205"]),
+    ("BRG-6305", "Ball Bearing 6305", RM, "Nos", 950, ["bearing 6305", "பேரிங்", "பேரிங் 6305"]),
+    ("BLT-M8X30", "Hex Bolt M8x30", RM, "Nos", 25, ["bolt M8", "M8 bolt", "போல்ட்", "போல்ட் M8"]),
+    ("BLT-M10X40", "Hex Bolt M10x40", RM, "Nos", 40, ["bolt M10", "M10 bolt", "போல்ட்", "போல்ட் M10"]),
+    ("NUT-M8", "Hex Nut M8", RM, "Nos", 8, ["nut M8", "நட்", "நட் M8"]),
+    ("NUT-M10", "Hex Nut M10", RM, "Nos", 12, ["nut M10", "நட்", "நட் M10"]),
     ("WSH-M8", "Flat Washer M8", RM, "Nos", 4, ["washer", "வாஷர்"]),
     ("SCR-M5X20", "Socket Cap Screw M5x20", RM, "Nos", 18, ["screw", "ஸ்க்ரூ", "திருகு"]),
     ("GR-SP40", "Spur Gear 40T", RM, "Nos", 2400, ["gear 40", "40 teeth gear", "கியர் 40"]),

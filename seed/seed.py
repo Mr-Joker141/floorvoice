@@ -159,16 +159,11 @@ async def manufacturing(erp: ErpClient) -> None:
     for op in d.OPERATIONS:
         await ensure(erp, "Operation", op, {"name": op, "__newname": op})
     for w in d.WORKSTATIONS:
-        await ensure(
-            erp,
-            "Workstation",
-            str(w["workstation_name"]),
-            {
-                "workstation_name": w["workstation_name"],
-                "hour_rate": w["hour_rate"],
-                "production_capacity": 1,
-            },
-        )
+        # High capacity so concurrent job-card time logs on one workstation don't collide.
+        doc = {"workstation_name": w["workstation_name"], "hour_rate": w["hour_rate"],
+               "production_capacity": 50}  # fmt: skip
+        if not await ensure(erp, "Workstation", str(w["workstation_name"]), doc):
+            await erp.update("Workstation", str(w["workstation_name"]), {"production_capacity": 50})
     for item, (op, ws, mins, comps) in d.BOMS.items():
         existing = await erp.get_list(
             "BOM", filters=[["item", "=", item], ["docstatus", "=", 1], ["is_default", "=", 1]]

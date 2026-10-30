@@ -51,3 +51,43 @@ Running log of decisions and of places where reality differed from the docs.
 - Item codes are recognised well ("6205").
 - Tamil from espeak-ng is unintelligible to the ASR ("400 bearing R400 mind stores line"),
   which says more about espeak than about the model. Real recordings needed.
+
+## 2026-10-31 (Day 2) — agent, text mode
+
+### Latency design
+- One Muse Spark round trip measured 1.1–4.6 s (`reasoning_effort` low was fastest and is the
+  default, `AGENT_REASONING`). A search -> write -> finish loop would be 3 calls and miss the
+  8 s budget, so:
+  1. **Pre-retrieval**: before the first call the server matches the utterance against the
+     masters (`agent/resolve.candidates`) and sends likely items/warehouses/job cards as
+     context. Ties are kept, so collisions ("bearings") stay visible to the agent. The
+     search tools remain for anything not in the candidates.
+  2. **Server readback**: after a successful write the server builds the one-line
+     confirmation (EN/TA templates, `agent/readback.py`) from the posted document instead of
+     waiting for a `finish` call. `finish` is still used for refusals and failures.
+- Result: typical transaction = 1 Spark call, 1.5–2.7 s end to end in text mode.
+
+### Muse Spark behaviour observed
+- Strict tool schemas with nullable types (`"type": ["string","null"]`) are accepted.
+- It issues parallel tool calls (searches) in one turn when allowed.
+- It usually returns a short `content` preamble alongside tool calls; we ignore it.
+- After a failed write it sometimes answers in plain text instead of calling `finish`; the
+  loop treats plain text as finish (or as a question if it ends with "?").
+
+### ERPNext behaviour
+- Inserting with `docstatus=1` in one request leaves Material Request `status = "Draft"`
+  (status hooks skipped). The client now inserts a draft, then submits with a PUT.
+  MAT-MR-2026-00001/2 were created before the fix and show "Draft"; demo reset clears them.
+- Job Card completion: v15 refuses to submit unless total completed == for_quantity, so a
+  partial quantity appends a time log and keeps the card open ("20 of 50 done"); the
+  quantity that reaches the planned total submits it (status Completed).
+- Workstation `production_capacity` raised to 50 so time logs of concurrent cards on one
+  workstation don't fail the overlap check.
+
+### Normalisation
+- Spoken digit runs are part numbers: "six two zero five" -> 6205 (not 13); Tamil
+  "ஆறு இரண்டு பூஜ்யம் ஐந்து" -> 6205.
+- Python `\w` excludes Tamil vowel signs/virama; tokeniser includes the Tamil block
+  explicitly. Tamil case suffixes glued to nouns ("ஸ்டோர்ஸ்லிருந்து") match by prefix.
+- "to"/"for" homophones: resolved deterministically only right after "card"; elsewhere the
+  prompt tells Spark to read them as 2/4 only in a quantity slot.

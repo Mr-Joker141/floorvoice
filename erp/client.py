@@ -138,10 +138,15 @@ class ErpClient:
     async def insert(
         self, doctype: str, doc: dict[str, Any], *, submit: bool = False
     ) -> dict[str, Any]:
-        payload = dict(doc)
+        """Insert a document; with submit=True, save as draft then submit it.
+
+        (Inserting with docstatus=1 in one call skips status hooks, e.g. a Material
+        Request stays "Draft" although submitted.)
+        """
+        created = dict(await self._request("POST", f"/api/resource/{doctype}", json=doc))
         if submit:
-            payload["docstatus"] = 1
-        return dict(await self._request("POST", f"/api/resource/{doctype}", json=payload))
+            created = await self.submit(doctype, created["name"])
+        return created
 
     async def update(self, doctype: str, name: str, changes: dict[str, Any]) -> dict[str, Any]:
         return dict(await self._request("PUT", f"/api/resource/{doctype}/{name}", json=changes))
