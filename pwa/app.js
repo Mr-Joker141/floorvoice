@@ -6,7 +6,7 @@ const MIN_HOLD_MS = 300;
 const $ = (id) => document.getElementById(id);
 const el = {
   ptt: $("ptt"), pttLabel: $("ptt-label"), hint: $("hint"), transcript: $("transcript"),
-  card: $("card"), cardStatus: $("card-status"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
+  card: $("card"), cardStatus: $("card-status"), cardLinks: $("card-links"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
   history: $("history"), home: $("home"), typed: $("typed"), typedInput: $("typed-input"),
 };
 
@@ -100,12 +100,28 @@ function showTranscript(text, final) {
   el.transcript.classList.toggle("final", !!final);
 }
 
-function showCard(kind, text, { options = [], meta = "" } = {}) {
+function erpLinks(docs) {
+  const frag = document.createDocumentFragment();
+  for (const d of docs) {
+    if (!d.url) continue;
+    const a = document.createElement("a");
+    a.href = d.url;
+    a.target = "_blank";
+    a.rel = "noopener";
+    a.className = "erp-link";
+    a.textContent = `Open ${d.name} in ERPNext ↗`;
+    frag.append(a);
+  }
+  return frag;
+}
+
+function showCard(kind, text, { options = [], meta = "", docs = [] } = {}) {
   el.card.hidden = false;
   el.card.className = `card ${kind}`;
   el.cardStatus.textContent = STATUS[kind] || "";
   el.cardText.textContent = text;
   el.cardMeta.textContent = meta;
+  el.cardLinks.replaceChildren(erpLinks(docs));
   el.options.innerHTML = "";
   for (const opt of options) {
     const b = document.createElement("button");
@@ -125,7 +141,7 @@ function handleResult(r) {
   if (!awaitingAnswer) sessionId = newId();
   const timing = r.total_ms ? `${(r.total_ms / 1000).toFixed(1)} s from release`
     : `${(r.elapsed_ms / 1000).toFixed(1)} s`;
-  showCard(r.kind, r.text, { options: r.options || [], meta: timing });
+  showCard(r.kind, r.text, { options: r.options || [], meta: timing, docs: r.documents || [] });
   el.card.scrollIntoView({ behavior: "smooth", block: "center" });
   speak(r.speech || r.text);
   if (r.kind === "done") flashButton(true, "Posted ✓");
@@ -367,7 +383,7 @@ async function refreshHistory() {
       const did = document.createElement("div");
       did.className = `did ${h.kind}`;
       did.textContent = h.text;
-      li.append(said, did);
+      li.append(said, did, erpLinks(h.documents || []));
       el.history.append(li);
     }
   } catch { /* history is best-effort */ }

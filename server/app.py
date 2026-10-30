@@ -5,6 +5,7 @@ from __future__ import annotations
 import hmac
 import json
 import logging
+import os
 import time
 import uuid
 from collections.abc import AsyncIterator
@@ -107,8 +108,27 @@ def _repeat_prompt(transcript: str) -> str:
     return "I didn't catch that. Please say it again."
 
 
+def erp_public_url() -> str:
+    """Public ERPNext desk URL for links (env ERP_PUBLIC_URL or scripts/erp_tunnel.sh)."""
+    if url := os.environ.get("ERP_PUBLIC_URL"):
+        return url.rstrip("/")
+    try:
+        return (get_settings().data_dir / "erp_public_url").read_text().strip().rstrip("/")
+    except OSError:
+        return ""
+
+
+def erp_link(doctype: str, name: str) -> str:
+    base = erp_public_url()
+    return f"{base}/app/{doctype.lower().replace(' ', '-')}/{name}" if base else ""
+
+
 def _docs(result: AgentResult) -> list[dict[str, str]]:
-    return [{"doctype": p.doctype, "name": p.name, "summary": p.summary} for p in result.posted]
+    return [
+        {"doctype": p.doctype, "name": p.name, "summary": p.summary,
+         "url": erp_link(p.doctype, p.name)}
+        for p in result.posted
+    ]  # fmt: skip
 
 
 class Service:
@@ -248,7 +268,11 @@ async def clarify(req: ClarifyRequest) -> ActResponse:
 
 @app.get("/history", dependencies=[Depends(require_key)])
 async def history(limit: int = 50) -> list[dict[str, Any]]:
-    return [asdict(h) for h in reversed(service().store.history[-limit:])]
+    rows = [asdict(h) for h in reversed(service().store.history[-limit:])]
+    for row in rows:  # links follow the current tunnel URL, not the one stored at posting
+        for doc in row["documents"]:
+            doc["url"] = erp_link(doc["doctype"], doc["name"])
+    return rows
 
 
 @app.get("/warehouses", dependencies=[Depends(require_key)])
