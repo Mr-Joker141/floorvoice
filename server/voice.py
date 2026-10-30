@@ -118,6 +118,16 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
             await _send(ws, {"type": "error", "message": "Speech recognition failed. Try again."})
             return
         t_final = time.monotonic()
+        if not pcm:
+            await _send(
+                ws,
+                {
+                    "type": "error",
+                    "message": "No sound from the microphone. "
+                    "Check microphone permission, then hold the button while speaking.",
+                },
+            )
+            return
         await _send(ws, {"type": "final", "text": final})
         log.info(
             "%s asr final %.2fs after release, %.1fs audio: %r",

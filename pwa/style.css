@@ -112,6 +112,20 @@ main {
 .card.ask { border-left-color: var(--ask); }
 .card.error, .card.repeat { border-left-color: var(--err); }
 
+.card-status {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  margin: 0 0 6px;
+}
+
+.card.done .card-status { color: var(--ok); }
+.card.ask .card-status { color: var(--ask); }
+.card.error .card-status, .card.repeat .card-status, .card.finish .card-status { color: var(--err); }
+.card.done { background: rgba(60, 207, 142, 0.12); }
+.card.finish { border-left-color: var(--err); }
+
 .card-text {
   font-size: 19px;
   line-height: 1.4;
@@ -228,7 +242,15 @@ main {
   animation: pulse 1.2s ease-out infinite;
 }
 
-.ptt.busy { background: var(--panel); color: var(--muted); box-shadow: none; }
+.ptt.busy { background: var(--panel); color: var(--text); box-shadow: none; }
+.ptt.busy svg { animation: spin-fade 1s ease-in-out infinite alternate; }
+.ptt.flash-done { background: var(--ok); color: #0b2a1c; box-shadow: 0 8px 30px rgba(60, 207, 142, 0.35); }
+.ptt.flash-fail { background: var(--err); color: #fff; box-shadow: 0 8px 30px rgba(255, 107, 107, 0.35); }
+
+@keyframes spin-fade {
+  from { opacity: 1; }
+  to { opacity: 0.3; }
+}
 
 @keyframes pulse {
   0% { box-shadow: 0 0 0 0 rgba(255, 77, 77, 0.55); }

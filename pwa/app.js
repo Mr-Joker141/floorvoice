@@ -6,7 +6,7 @@ const MIN_HOLD_MS = 300;
 const $ = (id) => document.getElementById(id);
 const el = {
   ptt: $("ptt"), pttLabel: $("ptt-label"), hint: $("hint"), transcript: $("transcript"),
-  card: $("card"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
+  card: $("card"), cardStatus: $("card-status"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
   history: $("history"), home: $("home"), typed: $("typed"), typedInput: $("typed-input"),
 };
 
@@ -66,12 +66,32 @@ function newId() {
     : Math.random().toString(16).slice(2) + Date.now().toString(16);
 }
 
+let flashTimer = 0;
+
 function setButton(mode) {
-  el.ptt.classList.toggle("recording", mode === "recording");
-  el.ptt.classList.toggle("busy", mode === "busy");
+  clearTimeout(flashTimer);
+  el.ptt.classList.remove("recording", "busy", "flash-done", "flash-fail");
+  if (mode === "recording" || mode === "busy") el.ptt.classList.add(mode);
   el.pttLabel.textContent = mode === "recording" ? "Release to send"
-    : mode === "busy" ? "Working…" : awaitingAnswer ? "Hold to answer" : "Hold to talk";
+    : mode === "busy" ? "Posting…" : awaitingAnswer ? "Hold to answer" : "Hold to talk";
 }
+
+// Show the outcome on the button itself for a moment: it is always on screen.
+function flashButton(ok, label) {
+  setButton("idle");
+  el.ptt.classList.add(ok ? "flash-done" : "flash-fail");
+  el.pttLabel.textContent = label;
+  navigator.vibrate?.(ok ? 60 : [80, 60, 80]);
+  flashTimer = setTimeout(() => setButton("idle"), 2500);
+}
+
+const STATUS = {
+  done: "✓ Posted to ERPNext",
+  ask: "? Question — answer by holding the button",
+  finish: "✗ Not posted",
+  error: "✗ Not posted",
+  repeat: "✗ Not posted — say it again",
+};
 
 function showTranscript(text, final) {
   el.hint.hidden = true;
@@ -83,6 +103,7 @@ function showTranscript(text, final) {
 function showCard(kind, text, { options = [], meta = "" } = {}) {
   el.card.hidden = false;
   el.card.className = `card ${kind}`;
+  el.cardStatus.textContent = STATUS[kind] || "";
   el.cardText.textContent = text;
   el.cardMeta.textContent = meta;
   el.options.innerHTML = "";
@@ -105,8 +126,11 @@ function handleResult(r) {
   const timing = r.total_ms ? `${(r.total_ms / 1000).toFixed(1)} s from release`
     : `${(r.elapsed_ms / 1000).toFixed(1)} s`;
   showCard(r.kind, r.text, { options: r.options || [], meta: timing });
+  el.card.scrollIntoView({ behavior: "smooth", block: "center" });
   speak(r.speech || r.text);
-  setButton("idle");
+  if (r.kind === "done") flashButton(true, "Posted ✓");
+  else if (r.kind === "ask") setButton("idle");
+  else flashButton(false, "Not posted");
   refreshHistory();
 }
 
@@ -274,7 +298,7 @@ function fail(utt, message) {
   finish(utt);
   showCard("error", message);
   speak(message);
-  setButton("idle");
+  flashButton(false, "Not posted");
 }
 
 // Hold-to-talk on touch, mouse and pen; space bar on desktop.
