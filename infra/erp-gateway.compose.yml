@@ -1,0 +1,35 @@
+# nginx front for the floorvoice.local site on an existing Frappe/ERPNext v15 bench
+# (ERPNext is a pre-existing open-source dependency, not part of this project).
+# Reuses the bench's image, network and sites volume; adds no new images.
+name: floorvoice
+
+services:
+  erp-gateway:
+    image: ${ERP_BENCH_IMAGE:-nch-uat:15}
+    container_name: floorvoice-erp-gateway
+    restart: unless-stopped
+    command: [nginx-entrypoint.sh]
+    environment:
+      BACKEND: backend:8000
+      SOCKETIO: websocket:9000
+      FRAPPE_SITE_NAME_HEADER: ${ERP_SITE:-floorvoice.local}
+      UPSTREAM_REAL_IP_ADDRESS: 127.0.0.1
+      UPSTREAM_REAL_IP_HEADER: X-Forwarded-For
+      UPSTREAM_REAL_IP_RECURSIVE: "off"
+      PROXY_READ_TIMEOUT: "120"
+      CLIENT_MAX_BODY_SIZE: 50m
+    ports:
+      - "127.0.0.1:${ERP_PORT:-8090}:8080"
+    volumes:
+      - bench-sites:/home/frappe/frappe-bench/sites
+    networks: [bench]
+
+volumes:
+  bench-sites:
+    external: true
+    name: ${ERP_SITES_VOLUME:-nch-uat_nch-sites}
+
+networks:
+  bench:
+    external: true
+    name: ${ERP_BENCH_NETWORK:-nch-uat_default}
