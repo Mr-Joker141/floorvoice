@@ -39,3 +39,15 @@ Running log of decisions and of places where reality differed from the docs.
 ### Test audio
 - `samples/*.wav` are synthetic (espeak-ng, 24 kHz mono s16le) for pipeline smoke tests
   only; real phone recordings are needed to judge Tamil accuracy.
+
+### First Voice Transcribe run (synthetic samples, keywords = 169 from masters)
+- File and realtime endpoints both behave as documented; handshake + 169 keywords accepted.
+- Latency: realtime final arrives ~1.3–1.6 s after the end of audio (incl. connect);
+  file endpoint 1.8–3.4 s for 2–5 s clips.
+- English is accurate, but spoken numbers come back as homophones:
+  "two bearing" -> "to bearing", "job card four" -> "job card for". Number normalisation
+  must treat "to"/"for" before an item or after "job card" as candidate quantities, and the
+  agent must confirm against masters rather than trust them.
+- Item codes are recognised well ("6205").
+- Tamil from espeak-ng is unintelligible to the ASR ("400 bearing R400 mind stores line"),
+  which says more about espeak than about the model. Real recordings needed.
