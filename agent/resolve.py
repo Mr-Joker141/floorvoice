@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 from typing import Any
 
-from erp.masters import split_aliases
+from erp.masters import is_open, split_aliases
 
 MAX_RESULTS = 5
 MIN_SCORE = 0.5
@@ -144,6 +144,12 @@ def search_warehouses(m: Masters, query: str) -> list[dict[str, Any]]:
     return [{"name": w["name"], "match": round(s, 2)} for s, w in _ranked(scored)]
 
 
+def _pending(jc: dict[str, Any]) -> float:
+    if not is_open(jc):
+        return 0.0
+    return float(jc.get("for_quantity") or 0) - float(jc.get("total_completed_qty") or 0)
+
+
 def job_number(name: str) -> int | None:
     found = _JOB_NO.search(name)
     return int(found.group(1)) if found else None
@@ -154,8 +160,11 @@ def search_job_cards(m: Masters, query: str) -> list[dict[str, Any]]:
     scored: list[tuple[float, dict[str, Any]]] = []
     for jc in m.job_cards:
         if nums:
-            # "job card 4" / "PO-JOB00004": match on the card's sequence number.
+            # "job card 4" / "PO-JOB00004": match on the card's sequence number (open or not,
+            # so the agent can say "already completed").
             s = 1.0 if job_number(jc["name"]) in nums else 0.0
+        elif not is_open(jc):
+            continue
         else:
             s = score(
                 query,
@@ -172,8 +181,8 @@ def search_job_cards(m: Masters, query: str) -> list[dict[str, Any]]:
         {
             "name": jc["name"],
             "item": jc.get("item_name") or jc.get("production_item"),
-            "pending_qty": float(jc.get("for_quantity") or 0)
-            - float(jc.get("total_completed_qty") or 0),
+            "status": "Open" if is_open(jc) else "Completed",
+            "pending_qty": _pending(jc),
             "workstation": jc.get("workstation"),
             "match": round(s, 2),
         }
@@ -262,8 +271,8 @@ def candidates(m: Masters, utterance: str) -> dict[str, list[dict[str, Any]]]:
             {
                 "name": j["name"],
                 "item": j.get("item_name") or j.get("production_item"),
-                "pending_qty": float(j.get("for_quantity") or 0)
-                - float(j.get("total_completed_qty") or 0),
+                "status": "Open" if is_open(j) else "Completed",
+                "pending_qty": _pending(j),
             }
             for j in cards
         ],

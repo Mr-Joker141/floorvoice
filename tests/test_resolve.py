@@ -82,3 +82,10 @@ def test_candidates_to_is_not_two(masters: Masters) -> None:
 def test_candidates_job_card_homophone(masters: Masters) -> None:
     c = candidates(masters, "job card for completed 30 pieces")
     assert [j["name"] for j in c["job_cards"]] == ["PO-JOB00004"]
+
+
+def test_completed_job_card_found_by_number_only(masters: Masters) -> None:
+    masters.job_cards[3].update(status="Completed", docstatus=1, total_completed_qty=30)
+    [jc] = search_job_cards(masters, "job card 4")
+    assert (jc["status"], jc["pending_qty"]) == ("Completed", 0)
+    assert [j["name"] for j in search_job_cards(masters, "pump")] == ["PO-JOB00001"]

@@ -1,7 +1,8 @@
-"""FloorVoice HTTP API: /act, /clarify, /history (audio WebSocket arrives on Day 3)."""
+"""FloorVoice API: WS /audio, POST /act, POST /clarify, GET /history, and the PWA."""
 
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import time
@@ -10,20 +11,23 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent.loop import AgentResult, AgentState
 from agent.normalize import detect_language, token_count
 from agent.runtime import Runtime, build_runtime
-from server.config import get_settings
+from server.config import ROOT, Settings, get_settings
 
 log = logging.getLogger("floorvoice")
 
 MIN_TOKENS = 3
 PENDING_TTL = 300.0
+KEY_HEADER = "X-FloorVoice-Key"
 
 
 class ActRequest(BaseModel):
@@ -44,6 +48,7 @@ class ActResponse(BaseModel):
     speech: str
     options: list[str] = []
     documents: list[dict[str, str]] = []
+    transcript: str = ""
     elapsed_ms: int
 
 
@@ -68,7 +73,7 @@ class Pending:
 class Store:
     """In-memory pending conversations + history (appended to data/history.jsonl)."""
 
-    def __init__(self, path: Any) -> None:
+    def __init__(self, path: Path) -> None:
         self.path = path
         self.pending: dict[str, Pending] = {}
         self.history: list[HistoryEntry] = []
@@ -92,6 +97,10 @@ class Store:
         return self.pending.pop(session_id, None)
 
 
+class AgentFailure(RuntimeError):
+    pass
+
+
 def _repeat_prompt(transcript: str) -> str:
     if detect_language(transcript) == "ta":
         return "சரியாக கேட்கவில்லை. மீண்டும் சொல்லுங்கள்."
@@ -102,12 +111,98 @@ def _docs(result: AgentResult) -> list[dict[str, str]]:
     return [{"doctype": p.doctype, "name": p.name, "summary": p.summary} for p in result.posted]
 
 
+class Service:
+    """Shared act/clarify logic for the HTTP endpoints and the audio WebSocket."""
+
+    def __init__(self, settings: Settings, rt: Runtime, store: Store) -> None:
+        self.settings = settings
+        self.rt = rt
+        self.store = store
+
+    def has_pending(self, session_id: str) -> bool:
+        return session_id in self.store.pending
+
+    def _respond(
+        self,
+        session_id: str,
+        result: AgentResult,
+        entry: HistoryEntry,
+        t0: float,
+        state: AgentState,
+        transcript: str,
+    ) -> ActResponse:
+        entry.kind = result.kind
+        entry.text = result.text
+        entry.documents = _docs(result)
+        if result.kind == "ask":
+            self.store.pending[session_id] = Pending(state, entry)
+        else:
+            self.store.record(entry)
+        elapsed = int((time.monotonic() - t0) * 1000)
+        log.info("%s %s %dms %r -> %r", session_id[:8], result.kind, elapsed, transcript,
+                 result.text)  # fmt: skip
+        return ActResponse(
+            session_id=session_id,
+            kind=result.kind,
+            text=result.text,
+            speech=result.speech,
+            options=result.options,
+            documents=entry.documents,
+            transcript=transcript,
+            elapsed_ms=elapsed,
+        )
+
+    async def act(
+        self, transcript: str, session_id: str, home_warehouse: str | None = None
+    ) -> ActResponse:
+        t0 = time.monotonic()
+        transcript = transcript.strip()
+        if token_count(transcript) < MIN_TOKENS:
+            text = _repeat_prompt(transcript)
+            return ActResponse(session_id=session_id, kind="repeat", text=text, speech=text,
+                               transcript=transcript, elapsed_ms=0)  # fmt: skip
+        self.store.pending.pop(session_id, None)  # a new utterance abandons an open question
+        entry = HistoryEntry(
+            at=datetime.now().isoformat(timespec="seconds"),
+            session_id=session_id,
+            transcript=transcript,
+            kind="",
+            text="",
+        )
+        try:
+            state, result = await self.rt.agent.act(transcript, home_warehouse=home_warehouse)
+        except Exception as e:
+            log.exception("agent failed for %r", transcript)
+            raise AgentFailure(str(e)) from e
+        return self._respond(session_id, result, entry, t0, state, transcript)
+
+    async def clarify(self, session_id: str, answer: str) -> ActResponse:
+        t0 = time.monotonic()
+        answer = answer.strip()
+        if not answer:
+            text = _repeat_prompt(answer)
+            return ActResponse(session_id=session_id, kind="repeat", text=text, speech=text,
+                               elapsed_ms=0)  # fmt: skip
+        pending = self.store.take_pending(session_id)
+        if pending is None:
+            raise KeyError(session_id)
+        pending.entry.answers.append(answer)
+        try:
+            result = await self.rt.agent.clarify(pending.state, answer)
+        except Exception as e:
+            log.exception("agent failed on clarify %r", answer)
+            raise AgentFailure(str(e)) from e
+        return self._respond(session_id, result, pending.entry, t0, pending.state, answer)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+    for noisy in ("httpx", "httpx2", "openai"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
     settings = get_settings()
     rt = build_runtime(settings)
-    app.state.rt = rt
-    app.state.store = Store(settings.data_dir / "history.jsonl")
+    app.state.service = Service(settings, rt, Store(settings.data_dir / "history.jsonl"))
     try:
         await rt.cache.get()
     except Exception:  # ERPNext may be starting; the cache retries on first request
@@ -119,82 +214,62 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 app = FastAPI(title="FloorVoice", lifespan=lifespan)
 
 
-def _rt() -> Runtime:
-    return app.state.rt  # type: ignore[no-any-return]
+def service() -> Service:
+    return app.state.service  # type: ignore[no-any-return]
 
 
-def _store() -> Store:
-    return app.state.store  # type: ignore[no-any-return]
+def key_ok(given: str | None) -> bool:
+    expected = get_settings().access_key
+    return not expected or hmac.compare_digest((given or "").encode(), expected.encode())
 
 
-def _respond(
-    session_id: str, result: AgentResult, entry: HistoryEntry, t0: float, state: AgentState
-) -> ActResponse:
-    entry.kind = result.kind
-    entry.text = result.text
-    entry.documents = _docs(result)
-    if result.kind == "ask":
-        _store().pending[session_id] = Pending(state, entry)
-    else:
-        _store().record(entry)
-    elapsed = int((time.monotonic() - t0) * 1000)
-    log.info("%s %s %dms %r -> %r", session_id[:8], result.kind, elapsed, entry.transcript,
-             result.text)  # fmt: skip
-    return ActResponse(
-        session_id=session_id,
-        kind=result.kind,
-        text=result.text,
-        speech=result.speech,
-        options=result.options,
-        documents=entry.documents,
-        elapsed_ms=elapsed,
-    )
+def require_key(request: Request) -> None:
+    if not key_ok(request.headers.get(KEY_HEADER) or request.query_params.get("k")):
+        raise HTTPException(401, "Missing or wrong access key")
 
 
-@app.post("/act", response_model=ActResponse)
+@app.post("/act", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def act(req: ActRequest) -> ActResponse:
-    t0 = time.monotonic()
-    transcript = req.transcript.strip()
-    if token_count(transcript) < MIN_TOKENS:
-        text = _repeat_prompt(transcript)
-        return ActResponse(session_id=req.session_id, kind="repeat", text=text, speech=text,
-                           elapsed_ms=int((time.monotonic() - t0) * 1000))  # fmt: skip
-    _store().pending.pop(req.session_id, None)  # a new utterance abandons any open question
-    entry = HistoryEntry(
-        at=datetime.now().isoformat(timespec="seconds"),
-        session_id=req.session_id,
-        transcript=transcript,
-        kind="",
-        text="",
-    )
     try:
-        state, result = await _rt().agent.act(transcript, home_warehouse=req.home_warehouse)
-    except Exception as e:
-        log.exception("agent failed for %r", transcript)
+        return await service().act(req.transcript, req.session_id, req.home_warehouse)
+    except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
-    return _respond(req.session_id, result, entry, t0, state)
 
 
-@app.post("/clarify", response_model=ActResponse)
+@app.post("/clarify", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def clarify(req: ClarifyRequest) -> ActResponse:
-    t0 = time.monotonic()
-    pending = _store().take_pending(req.session_id)
-    if pending is None:
-        raise HTTPException(404, "No open question for this session")
-    pending.entry.answers.append(req.answer)
     try:
-        result = await _rt().agent.clarify(pending.state, req.answer)
-    except Exception as e:
-        log.exception("agent failed on clarify %r", req.answer)
+        return await service().clarify(req.session_id, req.answer)
+    except KeyError as e:
+        raise HTTPException(404, "No open question for this session") from e
+    except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
-    return _respond(req.session_id, result, pending.entry, t0, pending.state)
 
 
-@app.get("/history")
+@app.get("/history", dependencies=[Depends(require_key)])
 async def history(limit: int = 50) -> list[dict[str, Any]]:
-    return [asdict(h) for h in reversed(_store().history[-limit:])]
+    return [asdict(h) for h in reversed(service().store.history[-limit:])]
+
+
+@app.get("/warehouses", dependencies=[Depends(require_key)])
+async def warehouses() -> list[dict[str, str]]:
+    m = await service().rt.cache.get()
+    return [{"name": w["name"], "label": w["warehouse_name"]} for w in m.warehouses]
 
 
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.websocket("/audio")
+async def audio(ws: WebSocket) -> None:
+    from server.voice import handle_audio  # local import keeps app import light for tests
+
+    if not key_ok(ws.query_params.get("k")):
+        await ws.close(code=4401, reason="Missing or wrong access key")
+        return
+    await handle_audio(ws, service())
+
+
+app.mount("/", StaticFiles(directory=ROOT / "pwa", html=True), name="pwa")

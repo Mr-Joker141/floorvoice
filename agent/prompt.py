@@ -37,6 +37,8 @@ finish with a plain explanation of the problem.
 - After a successful write the server reads back the confirmation; do not call anything else.
 - Out-of-scope requests (anything other than the three transactions): finish with a short \
 explanation of what you can do.
+- A job card with status Completed cannot take more quantity: finish saying so.
+- Be fast: do not deliberate over clear requests.
 - Language: write ask_user questions and finish summaries in Tamil if the utterance is \
 Tamil or Tamil-English, else English. Keep them under 20 words, plain and spoken-style.
 """

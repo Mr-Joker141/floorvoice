@@ -27,6 +27,8 @@ def masters() -> Masters:
     job_cards = [
         {
             "name": f"PO-JOB{i + 1:05d}",
+            "status": "Open",
+            "docstatus": 0,
             "production_item": item,
             "item_name": next(n for c, n, *_ in d.ITEMS if c == item),
             "for_quantity": qty,

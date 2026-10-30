@@ -1,0 +1,11 @@
+{
+  "name": "FloorVoice",
+  "short_name": "FloorVoice",
+  "description": "Speak ERPNext transactions from the shop floor.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#14171c",
+  "theme_color": "#14171c",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

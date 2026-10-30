@@ -40,7 +40,7 @@ async def test_tamil_english_stock_transfer(rt: Runtime) -> None:
 
 async def test_english_job_completion(rt: Runtime) -> None:
     cards = (await rt.cache.get(refresh=True)).job_cards
-    open_cards = [c for c in cards if not c.get("total_completed_qty")]
+    open_cards = [c for c in cards if c["status"] == "Open" and not c.get("total_completed_qty")]
     if not open_cards:
         pytest.skip("no untouched job card left; run scripts/demo_reset.sh")
     card = open_cards[0]

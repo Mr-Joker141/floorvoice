@@ -28,6 +28,7 @@ class Settings:
     erp_default_warehouse: str
     erp_timezone: str
     agent_reasoning: str
+    access_key: str
 
 
 def get_settings() -> Settings:
@@ -41,4 +42,5 @@ def get_settings() -> Settings:
         erp_default_warehouse=os.environ.get("ERP_DEFAULT_WAREHOUSE", "Stores - FVD"),
         erp_timezone=os.environ.get("ERP_TIMEZONE", "Asia/Colombo"),
         agent_reasoning=os.environ.get("AGENT_REASONING", "low"),
+        access_key=os.environ.get("FLOORVOICE_KEY", ""),
     )

@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#14171c">
+  <title>FloorVoice</title>
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="bar">
+    <div class="brand"><span class="dot"></span>FloorVoice</div>
+    <label class="home" title="Your warehouse (used for requests)">
+      <span>My line</span>
+      <select id="home"></select>
+    </label>
+  </header>
+
+  <main>
+    <section class="stage" aria-live="polite">
+      <p id="hint" class="hint">Hold the button and speak — Tamil or English.<br>
+        <span lang="ta">பொத்தானை அழுத்திப் பிடித்து பேசுங்கள்.</span></p>
+      <p id="transcript" class="transcript" hidden></p>
+      <div id="card" class="card" hidden>
+        <p id="card-text" class="card-text"></p>
+        <div id="options" class="options"></div>
+        <p id="card-meta" class="card-meta"></p>
+      </div>
+    </section>
+
+    <section class="history">
+      <h2>Recent</h2>
+      <ol id="history"></ol>
+    </section>
+  </main>
+
+  <footer class="dock">
+    <form id="typed" class="typed" autocomplete="off">
+      <input id="typed-input" type="text" placeholder="…or type it" enterkeyhint="send">
+    </form>
+    <button id="ptt" class="ptt" type="button" aria-label="Hold to talk">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      <span id="ptt-label">Hold to talk</span>
+    </button>
+  </footer>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>

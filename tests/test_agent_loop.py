@@ -138,3 +138,86 @@ async def test_tamil_readback(make) -> None:
     )  # fmt: skip
     _, r = await agent.act("பத்து போல்ட் M8 வேண்டும்")
     assert r.text.startswith("பதிவானது MAT-MR-2026-00007")
+
+
+def test_parse_leaked_tool_call_markup() -> None:
+    from agent.loop import parse_leaked_calls
+
+    content = (
+        '<atem:function_calls>\n<atem:invoke name="default.create_stock_entry">\n'
+        '<atem:parameter name="purpose">Material Transfer</atem:parameter>\n'
+        '<atem:parameter name="item_code">6205</atem:parameter>\n'
+        '<atem:parameter name="qty">2</atem:parameter>\n'
+        '<atem:parameter name="from_warehouse">Stores &amp; Co</atem:parameter>\n'
+        '<atem:parameter name="to_warehouse">null</atem:parameter>\n'
+        "</atem:invoke>\n</atem:function_calls>"
+    )
+    [c] = parse_leaked_calls(content)
+    assert c.name == "create_stock_entry"
+    assert json.loads(c.arguments) == {
+        "purpose": "Material Transfer", "item_code": "6205", "qty": 2.0,
+        "from_warehouse": "Stores & Co", "to_warehouse": None,
+    }  # fmt: skip
+
+
+async def test_turn_budget_turns_slow_model_into_repeat(masters: Masters) -> None:
+    import asyncio
+
+    class SlowLlm:
+        async def __call__(self, messages: list[dict[str, Any]]) -> LlmReply:
+            await asyncio.sleep(1)
+            return LlmReply(None, [call("finish", summary="late")])
+
+    agent = Agent(SlowLlm(), FakeExecutor(), FixedCache(masters), turn_budget=0.05)  # type: ignore[arg-type]
+    _, r = await agent.act("move five seals to line one")
+    assert r.kind == "error" and "say it again" in r.text
+
+
+async def test_hedged_returns_faster_copy() -> None:
+    import asyncio
+
+    from agent.loop import hedged
+
+    delays = iter([1.0, 0.01])
+    started: list[float] = []
+
+    async def make() -> str:
+        d = next(delays)
+        started.append(d)
+        await asyncio.sleep(d)
+        return f"slept {d}"
+
+    assert await hedged(make, 0.05) == "slept 0.01"
+    assert started == [1.0, 0.01]
+
+
+async def test_hedged_fast_path_sends_once() -> None:
+    from agent.loop import hedged
+
+    calls = 0
+
+    async def make() -> int:
+        nonlocal calls
+        calls += 1
+        return calls
+
+    assert await hedged(make, 0.5) == 1 and calls == 1
+
+
+async def test_hedged_survives_one_failure() -> None:
+    import asyncio
+
+    from agent.loop import hedged
+
+    n = 0
+
+    async def make() -> str:
+        nonlocal n
+        n += 1
+        if n == 1:
+            await asyncio.sleep(0.1)
+            raise RuntimeError("boom")
+        await asyncio.sleep(0.2)
+        return "ok"
+
+    assert await hedged(make, 0.01) == "ok"

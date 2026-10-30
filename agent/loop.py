@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import asyncio
+import html
 import json
 import logging
+import re
 import time
+import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, TypeVar
 
 from openai import AsyncOpenAI
 
@@ -20,6 +25,11 @@ from agent.tools import TOOL_SCHEMAS, MastersCache, PostedDoc, ToolContext, Tool
 log = logging.getLogger(__name__)
 
 MAX_STEPS = 6
+# Spark time allowed per turn (act or clarify). With ~0.4-1 s of ASR this keeps
+# release-to-confirmation under the 8 s target; over budget we ask the worker to repeat.
+TURN_BUDGET_S = 6.0
+HEDGE_AFTER_S = 2.5
+T = TypeVar("T")
 
 
 @dataclass
@@ -39,15 +49,55 @@ class Completer(Protocol):
     async def __call__(self, messages: list[dict[str, Any]]) -> LlmReply: ...
 
 
+async def hedged(make: Callable[[], Awaitable[T]], hedge_after: float | None) -> T:
+    """Run `make()`; if it hasn't finished after `hedge_after` s, race a second copy.
+
+    Spark's latency is usually ~1.5 s with occasional 6-8 s outliers; a hedged request
+    cuts that tail at the cost of a duplicate call on the slow ones.
+    """
+    first = asyncio.ensure_future(make())
+    if hedge_after is None:
+        return await first
+    done, _ = await asyncio.wait({first}, timeout=hedge_after)
+    if done:
+        return first.result()
+    log.info("spark slow after %.1fs, sending hedge request", hedge_after)
+    second = asyncio.ensure_future(make())
+    pending = {first, second}
+    try:
+        while pending:
+            done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+            for task in done:
+                if task.exception() is None:
+                    return task.result()
+                if not pending:
+                    raise task.exception()  # type: ignore[misc]
+        raise RuntimeError("unreachable")
+    finally:
+        for task in pending:
+            task.cancel()
+
+
 class SparkCompleter:
     """Chat Completions call to Muse Spark with the FloorVoice tools."""
 
-    def __init__(self, api_key: str, base_url: str, model: str, reasoning_effort: str = "low"):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: str,
+        model: str,
+        reasoning_effort: str = "low",
+        hedge_after: float | None = HEDGE_AFTER_S,
+    ):
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
         self.model = model
         self.reasoning_effort = reasoning_effort
+        self.hedge_after = hedge_after
 
     async def __call__(self, messages: list[dict[str, Any]]) -> LlmReply:
+        return await hedged(lambda: self._once(messages), self.hedge_after)
+
+    async def _once(self, messages: list[dict[str, Any]]) -> LlmReply:
         t = time.monotonic()
         resp = await self.client.chat.completions.create(
             model=self.model,
@@ -61,6 +111,13 @@ class SparkCompleter:
             for c in (msg.tool_calls or [])
             if c.type == "function"
         ]
+        content = msg.content
+        if not calls and content and "invoke name=" in content:
+            # Spark occasionally returns its tool call as markup in `content` instead of
+            # `tool_calls` (see NOTES.md). Recover it rather than reading markup aloud.
+            log.warning("spark leaked tool-call markup in content: %r", content[:500])
+            calls = parse_leaked_calls(content)
+            content = LEAK_BLOCK.sub("", content).strip() or None
         log.info(
             "spark %.2fs calls=%s usage=%s",
             time.monotonic() - t,
@@ -69,7 +126,44 @@ class SparkCompleter:
             if resp.usage
             else None,
         )
-        return LlmReply(msg.content, calls)
+        return LlmReply(content, calls)
+
+
+LEAK_BLOCK = re.compile(r"<(\w+:)?function_calls>.*?(</(\w+:)?function_calls>|$)", re.DOTALL)
+LEAK_INVOKE = re.compile(r'<(?:\w+:)?invoke name="([^"]+)">(.*?)</(?:\w+:)?invoke>', re.DOTALL)
+LEAK_PARAM = re.compile(r'<(?:\w+:)?parameter name="([^"]+)">(.*?)</(?:\w+:)?parameter>', re.DOTALL)
+_PARAM_TYPES: dict[str, dict[str, Any]] = {
+    t["function"]["name"]: t["function"]["parameters"]["properties"] for t in TOOL_SCHEMAS
+}
+
+
+def _coerce(tool: str, param: str, raw: str) -> Any:
+    value = html.unescape(raw.strip())
+    types = _PARAM_TYPES.get(tool, {}).get(param, {}).get("type", "string")
+    types = types if isinstance(types, list) else [types]
+    if value == "null" and "null" in types:
+        return None
+    if "number" in types:
+        try:
+            return float(value)
+        except ValueError:
+            return value
+    if "array" in types:
+        try:
+            return json.loads(value)
+        except ValueError:
+            return [value]
+    return value
+
+
+def parse_leaked_calls(content: str) -> list[ToolCall]:
+    """Recover tool calls that the model wrote as XML-ish markup inside `content`."""
+    calls = []
+    for i, (name, body) in enumerate(LEAK_INVOKE.findall(content)):
+        name = name.rsplit(".", 1)[-1]  # "default.finish" -> "finish"
+        args = {p: _coerce(name, p, v) for p, v in LEAK_PARAM.findall(body)}
+        calls.append(ToolCall(f"leak_{uuid.uuid4().hex[:12]}_{i}", name, json.dumps(args)))
+    return calls
 
 
 @dataclass
@@ -101,10 +195,13 @@ class Agent:
         completer: Completer,
         executor: ToolExecutor,
         cache: MastersCache,
+        *,
+        turn_budget: float = TURN_BUDGET_S,
     ) -> None:
         self.completer = completer
         self.executor = executor
         self.cache = cache
+        self.turn_budget = turn_budget
 
     async def start(self, transcript: str, *, home_warehouse: str | None = None) -> AgentState:
         text = normalize_numbers(transcript.strip())
@@ -154,8 +251,17 @@ class Agent:
         return await self.run(state)
 
     async def run(self, state: AgentState) -> AgentResult:
+        deadline = time.monotonic() + self.turn_budget
         for _ in range(MAX_STEPS):
-            reply = await self.completer(state.messages)
+            try:
+                reply = await asyncio.wait_for(
+                    self.completer(state.messages), max(0.1, deadline - time.monotonic())
+                )
+            except TimeoutError:
+                log.warning("turn over %.1fs budget for %r", self.turn_budget, state.transcript)
+                if state.ctx.posted:
+                    return self._done(state)
+                return AgentResult("error", _sorry(state.language))
             assistant: dict[str, Any] = {"role": "assistant", "content": reply.content or ""}
             if reply.tool_calls:
                 assistant["tool_calls"] = [

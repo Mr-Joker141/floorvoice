@@ -29,15 +29,20 @@ async def load_warehouses(erp: ErpClient) -> list[dict[str, Any]]:
     )
 
 
-async def load_open_job_cards(erp: ErpClient) -> list[dict[str, Any]]:
+async def load_job_cards(erp: ErpClient) -> list[dict[str, Any]]:
+    """Open and completed (not cancelled) job cards; `status` tells them apart."""
     return await erp.get_list(
         "Job Card",
-        fields=["name", "production_item", "item_name", "for_quantity", "total_completed_qty",
-                "workstation", "operation", "work_order"],
-        filters=[["docstatus", "=", 0], ["status", "not in", ["Completed", "Cancelled"]]],
+        fields=["name", "status", "docstatus", "production_item", "item_name", "for_quantity",
+                "total_completed_qty", "workstation", "operation", "work_order"],
+        filters=[["docstatus", "in", [0, 1]], ["status", "!=", "Cancelled"]],
         order_by="name asc",
-        limit=200,
+        limit=500,
     )  # fmt: skip
+
+
+def is_open(job_card: dict[str, Any]) -> bool:
+    return job_card.get("docstatus", 0) == 0 and job_card.get("status") != "Completed"
 
 
 def keywords_from_masters(
@@ -51,7 +56,7 @@ def keywords_from_masters(
         words += [it["item_code"], it["item_name"], *split_aliases(it.get("voice_aliases"))]
     for w in warehouses:
         words += [w["warehouse_name"], *split_aliases(w.get("voice_aliases"))]
-    for jc in job_cards:
+    for jc in filter(is_open, job_cards):
         words += [jc["name"], jc.get("workstation") or "", jc.get("operation") or ""]
     words += ["job card", "material request", "stock entry", "transfer", "issue"]
     seen: set[str] = set()
@@ -66,7 +71,7 @@ def keywords_from_masters(
 
 async def load_keywords(erp: ErpClient) -> list[str]:
     return keywords_from_masters(
-        await load_items(erp), await load_warehouses(erp), await load_open_job_cards(erp)
+        await load_items(erp), await load_warehouses(erp), await load_job_cards(erp)
     )
 
 

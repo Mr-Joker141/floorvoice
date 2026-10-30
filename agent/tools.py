@@ -57,8 +57,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
     ),
     _fn(
         "search_job_cards",
-        "Search open job cards by number ('4'), name, item or workstation. Returns name, item, "
-        "pending_qty and workstation.",
+        "Search job cards by number ('4'), name, item or workstation. Returns name, item, "
+        "status (Completed cards cannot take more quantity), pending_qty and workstation.",
         {"query": _STR},
     ),
     _fn(
@@ -138,7 +138,7 @@ class MastersCache:
                 items, whs, jcs, stock = await asyncio.gather(
                     erp_masters.load_items(self.erp),
                     erp_masters.load_warehouses(self.erp),
-                    erp_masters.load_open_job_cards(self.erp),
+                    erp_masters.load_job_cards(self.erp),
                     erp_masters.load_stock(self.erp),
                 )
                 self._masters = Masters(items, whs, jcs, stock)
@@ -283,8 +283,11 @@ class ToolExecutor:
         self, ctx: ToolContext, name: str, completed_qty: float
     ) -> dict[str, Any]:
         m = await self.cache.get()
-        if m.job_card(name) is None:
-            raise ToolError(f"no open job card {name!r}; use search_job_cards first")
+        known = m.job_card(name)
+        if known is None:
+            raise ToolError(f"no job card {name!r}; use search_job_cards first")
+        if not erp_masters.is_open(known):
+            return {"ok": False, "error": f"{name} is already completed"}
         q = _qty(completed_qty)
         jc = await self.erp.get_doc("Job Card", name)
         if jc.get("docstatus") != 0:

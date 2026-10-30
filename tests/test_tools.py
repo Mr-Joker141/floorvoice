@@ -176,3 +176,10 @@ async def test_bad_arguments_reported(ex: ToolExecutor, ctx: ToolContext) -> Non
     r = await ex.run("search_items", {"q": "x"}, ctx)
     assert r["ok"] is False and "bad arguments" in r["error"]
     assert (await ex.run("drop_tables", {}, ctx))["ok"] is False
+
+
+async def test_completed_job_card_refused(ex: ToolExecutor, ctx: ToolContext) -> None:
+    ex.cache.m.job_cards[3].update(status="Completed", docstatus=1)  # type: ignore[attr-defined]
+    with respx.mock:
+        r = await ex.run("complete_job_card", {"name": "PO-JOB00004", "completed_qty": 1}, ctx)
+    assert r == {"ok": False, "error": "PO-JOB00004 is already completed"}

@@ -91,3 +91,36 @@ Running log of decisions and of places where reality differed from the docs.
   explicitly. Tamil case suffixes glued to nouns ("ஸ்டோர்ஸ்லிருந்து") match by prefix.
 - "to"/"for" homophones: resolved deterministically only right after "card"; elsewhere the
   prompt tells Spark to read them as 2/4 only in a quantity slot.
+
+## 2026-10-30/11-01 (Day 3) — voice path, PWA, tunnel
+
+### Architecture of the voice path
+- One WebSocket per button press (`WS /audio`). The browser AudioWorklet resamples the mic
+  (usually 48 kHz) to 24 kHz s16le and streams 80 ms frames; the server opens the Voice
+  Transcribe session in parallel and buffers frames until the handshake ack. On release
+  the server sends `endStream`, gets the final transcript and runs the agent in the same
+  connection, so the phone needs no second round trip.
+- Measured: final transcript 0.35–1.1 s after release; full release-to-confirmation
+  2.0–4.9 s over the Cloudflare quick tunnel.
+- The quick tunnel (`trycloudflare.com`) needs no account; the URL changes only when the
+  cloudflared container is recreated. The API requires `FLOORVOICE_KEY` (header or `?k=`)
+  because the tunnel is public.
+
+### Muse Spark: deviations from the docs
+- **Tool call leaked into `content`.** Once, with no `tool_calls`, the response content was
+  `<atem:function_calls><atem:invoke name="default.finish"><atem:parameter name="summary">…`
+  (raw markup). This happened right after the prompt asked it not to write text alongside
+  tool calls (instruction since removed). `SparkCompleter` now logs the raw content and
+  parses such markup back into tool calls, coercing values with our tool schemas.
+- **Tail latency.** Same request, `reasoning_effort=low`: median ~1.7 s but occasional
+  6–8 s calls (and up to 1,200 completion tokens on confusing input). `minimal` is not
+  faster in practice (spikes to 6–7 s). Mitigations:
+  - hedged requests: a second identical request is raced if the first hasn't returned in
+    2.5 s (10-run ask benchmark: max 4.4 s instead of 6+ s);
+  - a 6 s per-turn Spark budget; over budget the worker is asked to repeat (never cuts an
+    ERP write; anything already posted is read back).
+
+### Verified without a phone
+- Headless Chromium (Playwright image) with a fake microphone playing `samples/*.wav`:
+  hold -> partial/final transcript -> Stock Entry posted -> card shown (4.5 s from release);
+  typed request -> question with option chips -> tap option -> Material Request posted.
