@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 from agent.normalize import normalize_numbers, reply_language
 from agent.prompt import SYSTEM_PROMPT
 from agent.readback import readback
-from agent.resolve import candidates, code_numbers, confusable, spoken_numbers
+from agent.resolve import candidates, code_numbers, confusable, option_items, spoken_numbers
 from agent.tools import TOOL_SCHEMAS, MastersCache, PostedDoc, ToolContext, ToolExecutor
 
 log = logging.getLogger(__name__)
@@ -183,6 +183,9 @@ class AgentState:
     # Second, independent transcript of the same audio (file endpoint), used to catch a
     # misheard part number before writing. None in text mode and after a clarification.
     alt_transcript: asyncio.Future[str] | None = None
+    # Set while the open question is over an item: [{option, item_code, item_name,
+    # voice_aliases}]. A label photo may then answer it by picking one of these.
+    photo_items: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -192,6 +195,7 @@ class AgentResult:
     speech: str = ""
     options: list[str] = field(default_factory=list)
     posted: list[PostedDoc] = field(default_factory=list)
+    photo_items: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.speech = self.speech or self.text
@@ -276,6 +280,7 @@ class Agent:
             state.messages.append({"role": "user", "content": answer})
         state.pending_call_id = None
         state.alt_transcript = None  # the worker has now said explicitly what they meant
+        state.photo_items = []
         return await self.run(state)
 
     async def run(self, state: AgentState) -> AgentResult:
@@ -343,7 +348,7 @@ class Agent:
             if confirm:
                 if terminal:
                     self._tool_result(state, terminal[0].id, {"ok": False, "error": "ignored"})
-                return self._ask(state, *confirm)
+                return await self._ask(state, *confirm)
             if len(state.ctx.posted) > posted_before:
                 if terminal:
                     self._tool_result(state, terminal[0].id, {"ok": True})
@@ -354,7 +359,7 @@ class Agent:
                     state.pending_call_id = call.id
                     question = str(args.get("question") or "").strip()
                     options = [str(o) for o in (args.get("options") or []) if str(o).strip()]
-                    return AgentResult("ask", question or _fallback_ask(state), options=options)
+                    return await self._question(state, question or _fallback_ask(state), options)
                 self._tool_result(state, call.id, {"ok": True})
                 return AgentResult("finish", str(args.get("summary") or "").strip() or "OK.")
         log.warning("agent hit MAX_STEPS for %r", state.transcript)
@@ -398,7 +403,17 @@ class Agent:
                 return question, names
         return None
 
-    def _ask(self, state: AgentState, question: str, options: list[str]) -> AgentResult:
+    async def _question(self, state: AgentState, question: str, options: list[str]) -> AgentResult:
+        """An "ask" result; offers the photo path when the options are distinct items."""
+        pairs = option_items(await self.cache.get(), options)
+        state.photo_items = [
+            {"option": opt, "item_code": i["item_code"], "item_name": i["item_name"],
+             "voice_aliases": i.get("voice_aliases") or ""}
+            for opt, i in pairs
+        ]  # fmt: skip
+        return AgentResult("ask", question, options=options, photo_items=list(state.photo_items))
+
+    async def _ask(self, state: AgentState, question: str, options: list[str]) -> AgentResult:
         """Server-initiated question, recorded as an ask_user call so clarify resumes it."""
         call_id = f"verify_{uuid.uuid4().hex[:12]}"
         args = {"question": question, "options": options}
@@ -410,7 +425,7 @@ class Agent:
         })  # fmt: skip
         state.pending_call_id = call_id
         state.alt_transcript = None
-        return AgentResult("ask", question, options=options)
+        return await self._question(state, question, options)
 
     def _done(self, state: AgentState) -> AgentResult:
         display, speech = readback(state.ctx.posted, state.language)

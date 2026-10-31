@@ -123,6 +123,8 @@ class ToolContext:
 
     transcript: str = ""
     posted: list[PostedDoc] = field(default_factory=list)
+    # Text Muse Spark read on the part label when a photo settled which item was meant.
+    photo_label: str = ""
 
 
 class MastersCache:
@@ -220,7 +222,10 @@ class ToolExecutor:
     # --- write tools ------------------------------------------------------------------
 
     def _remarks(self, ctx: ToolContext) -> str:
-        return f"Posted by FloorVoice from voice: {ctx.transcript}"[:1000]
+        line = f"Posted by FloorVoice from voice: {ctx.transcript}"
+        if ctx.photo_label:
+            line += f' | Item confirmed from label photo: "{ctx.photo_label}"'
+        return line[:1000]
 
     def _wh(self, m: Masters, ref: str | None, label: str) -> str:
         if not ref:
@@ -359,6 +364,7 @@ class ToolExecutor:
                 "company": self.company,
                 "schedule_date": needed_by,
                 "set_warehouse": wh,
+                "floorvoice_remarks": self._remarks(ctx),
                 "items": [
                     {"item_code": item_code, "qty": q, "warehouse": wh, "schedule_date": needed_by}
                 ],

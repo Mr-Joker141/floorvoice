@@ -164,7 +164,8 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
             if mode == "clarify" and svc.has_pending(session_id):
                 resp = await svc.clarify(session_id, final)
             else:
-                resp = await svc.act(final, session_id, home, alt_transcript=alt, speech=speech)
+                resp = await svc.act(final, session_id, home, alt_transcript=alt, speech=speech,
+                                     audio=audio_path.name if audio_path else "")  # fmt: skip
         except Exception as e:  # AgentFailure, ERP down, ...
             log.exception("act failed for %r", final)
             await _send(ws, {"type": "error", "message": f"Could not complete: {e}"})

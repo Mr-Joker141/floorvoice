@@ -134,6 +134,30 @@ def search_items(m: Masters, query: str) -> list[dict[str, Any]]:
     ]
 
 
+OPTION_MIN_SCORE = 0.9
+
+
+def option_items(m: Masters, options: list[str]) -> list[tuple[str, dict[str, Any]]]:
+    """[(option, item)] when every option of a question names a distinct item, else [].
+
+    Decides whether a question is over an item (and so whether a photo can answer it).
+    """
+    out: list[tuple[str, dict[str, Any]]] = []
+    for opt in options:
+        key = opt.strip().casefold()
+        item = next((i for i in m.items
+                     if key in (i["item_code"].casefold(), i["item_name"].casefold())), None)  # fmt: skip
+        if item is None and m.warehouse(opt) is None:
+            hits = _search_items(m, opt)
+            clear = len(hits) == 1 or (len(hits) > 1 and hits[0]["match"] > hits[1]["match"])
+            if hits and clear and hits[0]["match"] >= OPTION_MIN_SCORE:
+                item = m.item(hits[0]["item_code"])
+        if item is None or any(i["item_code"] == item["item_code"] for _, i in out):
+            return []
+        out.append((opt, item))
+    return out if len(out) >= 2 else []
+
+
 def _search_items(m: Masters, query: str) -> list[dict[str, Any]]:
     scored = [
         (

@@ -170,6 +170,7 @@ async def test_material_request_defaults(ex: ToolExecutor, ctx: ToolContext) -> 
     assert sent["material_request_type"] == "Purchase"
     assert submit.called
     assert sent["items"][0]["warehouse"] == "Stores - FVD"
+    assert sent["floorvoice_remarks"].startswith("Posted by FloorVoice from voice: move 2")
 
 
 async def test_bad_arguments_reported(ex: ToolExecutor, ctx: ToolContext) -> None:

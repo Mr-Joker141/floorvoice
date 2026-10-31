@@ -7,6 +7,8 @@ const $ = (id) => document.getElementById(id);
 const el = {
   ptt: $("ptt"), pttLabel: $("ptt-label"), hint: $("hint"), transcript: $("transcript"),
   card: $("card"), cardStatus: $("card-status"), cardLinks: $("card-links"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
+  photoRow: $("photo-row"), photoBtn: $("photo-btn"), photoLabel: $("photo-label"),
+  photoThumb: $("photo-thumb"), photoInput: $("photo-input"),
   history: $("history"), home: $("home"), speech: $("speech"), typed: $("typed"), typedInput: $("typed-input"),
 };
 
@@ -154,7 +156,9 @@ async function undoDoc(doc, button) {
   }
 }
 
-function showCard(kind, text, { options = [], meta = "", docs = [] } = {}) {
+const PHOTO_LABEL = { ta: "பாகத்தைக் காட்டு", si: "කොටස පෙන්වන්න", en: "Show me the part" };
+
+function showCard(kind, text, { options = [], meta = "", docs = [], photo = false, lang = "" } = {}) {
   el.card.hidden = false;
   el.card.className = `card ${kind}`;
   el.cardStatus.textContent = STATUS[kind] || "";
@@ -166,9 +170,15 @@ function showCard(kind, text, { options = [], meta = "", docs = [] } = {}) {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = opt;
-    b.addEventListener("click", () => answerTyped(opt));
+    b.addEventListener("click", () => answerTyped(opt, "chip"));
     el.options.append(b);
   }
+  // Only for a question over an item; the server decides (r.photo).
+  el.photoRow.hidden = !(kind === "ask" && photo);
+  el.photoBtn.disabled = false;
+  el.photoThumb.hidden = true;
+  el.photoThumb.classList.remove("reading");
+  el.photoLabel.textContent = PHOTO_LABEL[lang] || PHOTO_LABEL.en;
 }
 
 function clearCard() {
@@ -180,7 +190,8 @@ function handleResult(r) {
   if (!awaitingAnswer) sessionId = newId();
   const timing = r.total_ms ? `${(r.total_ms / 1000).toFixed(1)} s from release`
     : `${(r.elapsed_ms / 1000).toFixed(1)} s`;
-  showCard(r.kind, r.text, { options: r.options || [], meta: timing, docs: r.documents || [] });
+  showCard(r.kind, r.text, { options: r.options || [], meta: timing, docs: r.documents || [],
+                            photo: r.photo, lang: r.language });
   el.card.scrollIntoView({ behavior: "smooth", block: "center" });
   speak(r.speech || r.text);
   if (r.kind === "done") flashButton(true, "Posted ✓");
@@ -382,7 +393,7 @@ document.addEventListener("keyup", (e) => {
 
 // ---- typed fallback and option taps --------------------------------------------------------
 
-async function answerTyped(text) {
+async function answerTyped(text, via = "voice") {
   if (busy || !text.trim()) return;
   unlockSpeech();
   busy = true;
@@ -390,7 +401,7 @@ async function answerTyped(text) {
   showTranscript(text, true);
   try {
     const r = awaitingAnswer
-      ? await api("/clarify", { session_id: sessionId, answer: text })
+      ? await api("/clarify", { session_id: sessionId, answer: text, via })
       : await api("/act", { session_id: sessionId, transcript: text,
                             home_warehouse: el.home.value || null, speech: el.speech.value });
     busy = false;
@@ -410,6 +421,63 @@ el.typed.addEventListener("submit", (e) => {
   el.typedInput.value = "";
   el.typedInput.blur();
   answerTyped(text);
+});
+
+// ---- "Show me the part": photo answers an item question ---------------------------------
+
+const PHOTO_MAX_EDGE = 1280;
+
+async function downscale(file) {
+  const bitmap = await createImageBitmap(file, { imageOrientation: "from-image" });
+  const scale = Math.min(1, PHOTO_MAX_EDGE / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close?.();
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Could not encode photo"))),
+      "image/jpeg", 0.8));
+}
+
+el.photoBtn.addEventListener("click", () => {
+  if (busy || !awaitingAnswer) return;
+  unlockSpeech();
+  el.photoInput.value = "";
+  el.photoInput.click();
+});
+
+el.photoInput.addEventListener("change", async () => {
+  const file = el.photoInput.files?.[0];
+  if (!file || busy) return;
+  busy = true;
+  setButton("busy");
+  el.photoBtn.disabled = true;
+  let thumbUrl = "";
+  try {
+    const jpeg = await downscale(file);
+    thumbUrl = URL.createObjectURL(jpeg);
+    el.photoThumb.src = thumbUrl;
+    el.photoThumb.hidden = false;
+    el.photoThumb.classList.add("reading");
+    const form = new FormData();
+    form.append("session_id", sessionId);
+    form.append("image", jpeg, "part.jpg");
+    const res = await fetch("/clarify-photo", {
+      method: "POST", headers: { "X-FloorVoice-Key": accessKey }, body: form,
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    busy = false;
+    handleResult(await res.json());
+  } catch (e) {
+    busy = false;
+    el.photoBtn.disabled = false;
+    el.photoThumb.classList.remove("reading");
+    setButton("idle");
+    el.cardMeta.textContent = `Photo failed: ${e.message}`;
+  } finally {
+    if (thumbUrl) setTimeout(() => URL.revokeObjectURL(thumbUrl), 30000);
+  }
 });
 
 // ---- history ---------------------------------------------------------------------------

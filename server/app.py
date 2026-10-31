@@ -1,4 +1,4 @@
-"""FloorVoice API: WS /audio, POST /act, POST /clarify, GET /history, and the PWA."""
+"""FloorVoice API: WS /audio, POST /act, /clarify, /clarify-photo, /undo, GET /history, PWA."""
 
 from __future__ import annotations
 
@@ -14,9 +14,9 @@ from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile, WebSocket
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -24,12 +24,15 @@ from agent.loop import AgentResult, AgentState
 from agent.normalize import reply_language, token_count
 from agent.runtime import Runtime, build_runtime
 from agent.tools import PostedDoc, ToolError
+from agent.vision import identify
 from erp.client import ErpError
 from server.config import ROOT, Settings, get_settings
 
 log = logging.getLogger("floorvoice")
 
 MIN_TOKENS = 3
+PHOTO_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+MAX_PHOTO_BYTES = 8_000_000
 PENDING_TTL = 300.0
 KEY_HEADER = "X-FloorVoice-Key"
 
@@ -44,6 +47,7 @@ class ActRequest(BaseModel):
 class ClarifyRequest(BaseModel):
     session_id: str
     answer: str
+    via: str = "voice"  # how the worker answered: voice | chip (tapped option)
 
 
 class ActResponse(BaseModel):
@@ -55,6 +59,9 @@ class ActResponse(BaseModel):
     documents: list[dict[str, str]] = []
     transcript: str = ""
     elapsed_ms: int
+    language: str = ""
+    photo: bool = False  # the open question is over an item: offer "Show me the part"
+    label_text: str = ""  # what was read on the label, when a photo could not decide
 
 
 @dataclass
@@ -67,6 +74,10 @@ class HistoryEntry:
     documents: list[dict[str, str]] = field(default_factory=list)
     answers: list[str] = field(default_factory=list)
     language: str = ""
+    # How the item was settled: auto (no item question) | voice | chip | photo.
+    resolved_by: str = "auto"
+    audio: str = ""  # WAV of the press in data/audio/
+    photos: list[str] = field(default_factory=list)  # label photos, next to the WAV
 
 
 @dataclass
@@ -128,6 +139,13 @@ def _repeat_prompt(transcript: str, speech: str = "") -> str:
     if lang == "si":
         return "හරියට ඇහුණේ නැහැ. ආයෙත් කියන්න."
     return "I didn't catch that. Please say it again."
+
+
+def _unreadable(lang: str) -> str:
+    return {
+        "ta": "லேபிளைப் படிக்க முடியவில்லை — ஒன்றைத் தட்டுங்கள்",
+        "si": "ලේබලය කියවන්න බැරි වුණා — එකක් තට්ටු කරන්න",
+    }.get(lang, "Couldn't read the label — tap one")
 
 
 def erp_public_url() -> str:
@@ -193,6 +211,8 @@ class Service:
             documents=entry.documents,
             transcript=transcript,
             elapsed_ms=elapsed,
+            language=state.language,
+            photo=result.kind == "ask" and bool(result.photo_items),
         )
 
     async def act(
@@ -203,6 +223,7 @@ class Service:
         *,
         alt_transcript: asyncio.Future[str] | None = None,
         speech: str = "",
+        audio: str = "",
     ) -> ActResponse:
         t0 = time.monotonic()
         transcript = transcript.strip()
@@ -217,6 +238,7 @@ class Service:
             transcript=transcript,
             kind="",
             text="",
+            audio=audio,
         )
         try:
             state, result = await self.rt.agent.act(
@@ -230,7 +252,11 @@ class Service:
             raise AgentFailure(str(e)) from e
         return self._respond(session_id, result, entry, t0, state, transcript)
 
-    async def clarify(self, session_id: str, answer: str) -> ActResponse:
+    async def clarify(
+        self, session_id: str, answer: str, *, via: str = "voice", photo_label: str = ""
+    ) -> ActResponse:
+        """Resume the open question with the worker's answer (spoken, tapped or from a
+        label photo, which arrives here as the chip it picked)."""
         t0 = time.monotonic()
         answer = answer.strip()
         if not answer:
@@ -242,12 +268,57 @@ class Service:
         if pending is None:
             raise KeyError(session_id)
         pending.entry.answers.append(answer)
+        if pending.state.photo_items:  # the question was over an item
+            pending.entry.resolved_by = via if via in ("voice", "chip", "photo") else "voice"
+        if photo_label:
+            pending.state.ctx.photo_label = photo_label
         try:
             result = await self.rt.agent.clarify(pending.state, answer)
         except Exception as e:
             log.exception("agent failed on clarify %r", answer)
             raise AgentFailure(str(e)) from e
         return self._respond(session_id, result, pending.entry, t0, pending.state, answer)
+
+    async def clarify_photo(self, session_id: str, image: bytes, mime: str) -> ActResponse:
+        """Answer an open item question from a photo of the part or its label."""
+        t0 = time.monotonic()
+        pending = self.store.pending.get(session_id)
+        if pending is None:
+            raise KeyError(session_id)
+        if not pending.state.photo_items:
+            raise ValueError("the open question is not about an item")
+        pending.entry.photos.append(self._save_photo(pending.entry, image, mime))
+        items = pending.state.photo_items
+        match = await identify(self.rt.vision, image, mime, items)
+        log.info("%s photo %dms -> %s", session_id[:8], (time.monotonic() - t0) * 1000, match)
+        option = next((i["option"] for i in items if i["item_code"] == match.item_code), None)
+        if match.usable and option is not None:
+            return await self.clarify(session_id, option, via="photo",
+                                      photo_label=match.label_text)  # fmt: skip
+        # Low confidence, no match or over budget: back to the same question and chips.
+        lang = pending.state.language
+        text = _unreadable(lang)
+        return ActResponse(
+            session_id=session_id, kind="ask", text=text, speech=text,
+            options=[i["option"] for i in items], transcript=pending.entry.transcript,
+            elapsed_ms=int((time.monotonic() - t0) * 1000), language=lang, photo=True,
+            label_text=match.label_text,
+        )  # fmt: skip
+
+    def _save_photo(self, entry: HistoryEntry, image: bytes, mime: str) -> str:
+        folder = self.settings.data_dir / "audio"
+        folder.mkdir(parents=True, exist_ok=True)
+        stem = Path(entry.audio).stem if entry.audio else (
+            f"{time.strftime('%Y%m%d-%H%M%S')}-{entry.session_id[:12]}"
+        )  # fmt: skip
+        ext = PHOTO_TYPES.get(mime, ".jpg")
+        path = folder / f"{stem}{ext}"
+        n = 2
+        while path.exists():
+            path = folder / f"{stem}-{n}{ext}"
+            n += 1
+        path.write_bytes(image)
+        return path.name
 
 
 @asynccontextmanager
@@ -296,9 +367,29 @@ async def act(req: ActRequest) -> ActResponse:
 @app.post("/clarify", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def clarify(req: ClarifyRequest) -> ActResponse:
     try:
-        return await service().clarify(req.session_id, req.answer)
+        return await service().clarify(req.session_id, req.answer, via=req.via)
     except KeyError as e:
         raise HTTPException(404, "No open question for this session") from e
+    except AgentFailure as e:
+        raise HTTPException(502, f"Agent error: {e}") from e
+
+
+@app.post("/clarify-photo", response_model=ActResponse, dependencies=[Depends(require_key)])
+async def clarify_photo(
+    session_id: Annotated[str, Form()], image: Annotated[UploadFile, File()]
+) -> ActResponse:
+    mime = (image.content_type or "").split(";")[0]
+    if mime not in PHOTO_TYPES:
+        raise HTTPException(415, "Send a JPEG, PNG or WebP photo")
+    data = await image.read(MAX_PHOTO_BYTES + 1)
+    if not data or len(data) > MAX_PHOTO_BYTES:
+        raise HTTPException(413, "Photo is empty or too large")
+    try:
+        return await service().clarify_photo(session_id, data, mime)
+    except KeyError as e:
+        raise HTTPException(404, "No open question for this session") from e
+    except ValueError as e:
+        raise HTTPException(409, str(e)) from e
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
 

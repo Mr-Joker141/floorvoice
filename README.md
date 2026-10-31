@@ -15,6 +15,19 @@ Built for the Meta Global AI Developer Hackathon (Oct 30 – Nov 4, 2026).
 Also supported: material issue ("issue two kg grease from line two"), purchase requests
 ("order 20 hex nut M10"), and partial job-card progress ("20 of 50 done").
 
+**Show me the part (photo disambiguation).** When FloorVoice asks which item was meant
+(its two transcripts disagree on 6205 / 6305, or "bearings" matches four items), the
+question card also shows a **Show me the part** camera button. The worker photographs the
+part or its box label; the phone downscales it to 1280 px and sends it to
+`POST /clarify-photo`. Muse Spark's image understanding reads the label and, through a
+strict JSON schema, may only answer with one of the candidate item codes or null. The
+server re-checks the code against the candidates; with high or medium confidence it resumes
+the pending turn exactly as if that chip had been tapped, otherwise it says "Couldn't read
+the label — tap one" and keeps the chips. The photo is stored next to the press's WAV, the
+history row records `resolved_by: "photo"` (or `chip`, `voice`, `auto`), and the label text
+goes into the document's Remarks. The photo step has its own 6 s budget and never posts on
+its own. The button only appears when every option of the question is a distinct item.
+
 ## How it works
 
 ```
@@ -35,7 +48,12 @@ Also supported: material issue ("issue two kg grease from line two"), purchase r
                                  ▼
                          validate against masters & stock ──REST──▶ ERPNext v15
                                  │                                  (insert draft → submit)
- card + speech ◀──result────────┘  readback built from the posted document (EN / TA)
+ card + speech ◀──result────────┘  readback built from the posted document (EN / TA / SI)
+      │
+      └─ question over an item? ── "Show me the part" ── photo ──▶ POST /clarify-photo
+                                   Muse Spark image understanding, answer limited to the
+                                   candidate codes ── high/medium ──▶ resume as a chip tap
+                                                   ── low/null/6 s ──▶ back to the chips
 ```
 
 Design points (details and measurements in [NOTES.md](NOTES.md)):
@@ -119,10 +137,11 @@ ERPNext login, so keep it up only while you need it.
 ## Tests
 
 ```bash
-uv run pytest                          # 77 unit tests: normaliser, resolver, ERP client and
-                                       # tools against mocked HTTP, agent loop with a scripted LLM
-FLOORVOICE_LIVE=1 uv run pytest tests/test_live.py   # the 3 demo flows against live Spark +
-                                                     # ERPNext, with the 8 s budget (posts documents)
+uv run pytest                          # 127 unit tests: normaliser, resolver, ERP client and
+                                       # tools against mocked HTTP, agent loop with a scripted LLM,
+                                       # photo parsing and the photo/chip resume path
+FLOORVOICE_LIVE=1 uv run pytest tests/test_live.py   # the 3 demo flows + the label-photo flow
+                                                     # against live Spark + ERPNext (posts documents)
 uv run ruff check . && uv run ruff format --check .
 ```
 
@@ -130,8 +149,8 @@ uv run ruff check . && uv run ruff format --check .
 
 | Path | What |
 |---|---|
-| `server/` | FastAPI app (`/audio`, `/act`, `/clarify`, `/history`, `/warehouses`), Voice Transcribe client |
-| `agent/` | number normalisation, master matching, tool schemas and executor, agent loop, prompt, readback |
+| `server/` | FastAPI app (`/audio`, `/act`, `/clarify`, `/clarify-photo`, `/undo`, `/history`), Voice Transcribe client |
+| `agent/` | number normalisation, master matching, tool schemas and executor, agent loop, prompt, readback, label-photo matching (`vision.py`) |
 | `erp/` | async ERPNext REST client, master loaders, ASR keyword builder |
 | `pwa/` | the phone app: plain HTML/CSS/JS, AudioWorklet capture, browser speech synthesis |
 | `seed/` | demo company data and the idempotent seeding script |

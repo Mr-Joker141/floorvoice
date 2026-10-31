@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from agent.loop import Agent, SparkCompleter
 from agent.tools import MastersCache, ToolExecutor
+from agent.vision import PartVision, SparkVision
 from erp.client import ErpClient
 from server.config import AGENT_MODEL, META_API_BASE, Settings
 
@@ -15,6 +16,7 @@ class Runtime:
     erp: ErpClient
     cache: MastersCache
     agent: Agent
+    vision: PartVision
 
     async def aclose(self) -> None:
         await self.erp.aclose()
@@ -31,4 +33,5 @@ def build_runtime(s: Settings) -> Runtime:
         timezone=s.erp_timezone,
     )
     completer = SparkCompleter(s.meta_api_key, META_API_BASE, AGENT_MODEL, s.agent_reasoning)
-    return Runtime(erp, cache, Agent(completer, executor, cache))
+    vision = SparkVision(s.meta_api_key, META_API_BASE, AGENT_MODEL, s.agent_reasoning)
+    return Runtime(erp, cache, Agent(completer, executor, cache), vision)

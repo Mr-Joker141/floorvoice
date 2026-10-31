@@ -76,6 +76,20 @@ async def custom_fields(erp: ErpClient) -> None:
                 "description": "Comma-separated spoken names (English/Tamil) for FloorVoice.",
             },
         )
+    # Material Request has no Remarks field; FloorVoice keeps the spoken words here.
+    await ensure(
+        erp,
+        "Custom Field",
+        "Material Request-floorvoice_remarks",
+        {
+            "dt": "Material Request",
+            "fieldname": "floorvoice_remarks",
+            "label": "FloorVoice Remarks",
+            "fieldtype": "Small Text",
+            "insert_after": "material_request_type",
+            "read_only": 1,
+        },
+    )
 
 
 async def warehouses(erp: ErpClient) -> None:
