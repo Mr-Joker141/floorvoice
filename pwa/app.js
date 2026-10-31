@@ -214,6 +214,9 @@ function speak(text) {
   const lang = /[\u0D80-\u0DFF]/.test(text) ? "si" : /[\u0B80-\u0BFF]/.test(text) ? "ta" : "en";
   const u = new SpeechSynthesisUtterance(text);
   const voice = lang === "en" ? (pickVoice("en-in") || pickVoice("en")) : pickVoice(lang);
+  // No voice for this script (Sinhala on iPhone): an English voice would mangle it, so stay
+  // quiet and let the card on screen carry the confirmation.
+  if (!voice && lang !== "en") return;
   if (voice) u.voice = voice;
   u.lang = voice ? voice.lang : { si: "si-LK", ta: "ta-IN", en: "en-IN" }[lang];
   u.rate = 1.0;

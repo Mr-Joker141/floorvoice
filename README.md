@@ -148,8 +148,8 @@ uv run ruff check . && uv run ruff format --check .
 - Clarifying questions follow the dominant language of the utterance: mostly-English
   code-switching gets an English question. Confirmations after a write are always in the
   utterance's script.
-- Spoken readback uses the phone's built-in speech voices; without a Tamil voice installed,
-  Tamil confirmations are only shown, not spoken well.
+- Spoken readback uses the phone's built-in speech voices; without a Tamil or Sinhala voice
+  (iPhones have no Sinhala voice) the confirmation is only shown on screen, not spoken.
 - One shared access key, no per-worker login; history is kept in a local file.
 - Single transaction, single item per utterance; three transaction types only.
 - ERPNext v15 only (tested on 15.122). Partial job-card quantities are logged as time logs
