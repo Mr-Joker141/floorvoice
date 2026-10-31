@@ -339,8 +339,10 @@ class Service:
         log.info("%s photo %dms -> %s", session_id[:8], (time.monotonic() - t0) * 1000, match)
         option = next((i["option"] for i in items if i["item_code"] == match.item_code), None)
         if match.usable and option is not None:
-            return await self.clarify(session_id, option, via="photo",
+            resp = await self.clarify(session_id, option, via="photo",
                                       photo_label=match.label_text, worker=worker)  # fmt: skip
+            resp.elapsed_ms = int((time.monotonic() - t0) * 1000)  # include the vision call
+            return resp
         # Low confidence, no match or over budget: back to the same question and chips.
         lang = pending.state.language
         text = _unreadable(lang)

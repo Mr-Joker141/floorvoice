@@ -179,6 +179,7 @@ async def test_photo_resume_matches_chip_tap(masters: Masters, tmp_path) -> None
     entry = svc.store.history[-1]
     assert entry.resolved_by == "photo" and chip_svc.store.history[-1].resolved_by == "chip"
     assert entry.photos == ["20261031-120000-s2.jpg"]
+    assert photo.elapsed_ms >= 0
     assert (tmp_path / "photo" / "audio" / "20261031-120000-s2.jpg").read_bytes() == JPEG
 
 
