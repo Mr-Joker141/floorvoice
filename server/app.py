@@ -120,8 +120,11 @@ class AgentFailure(RuntimeError):
 
 
 def _repeat_prompt(transcript: str) -> str:
-    if detect_language(transcript) == "ta":
+    lang = detect_language(transcript)
+    if lang == "ta":
         return "சரியாக கேட்கவில்லை. மீண்டும் சொல்லுங்கள்."
+    if lang == "si":
+        return "හරියට ඇහුණේ නැහැ. ආයෙත් කියන්න."
     return "I didn't catch that. Please say it again."
 
 
@@ -300,6 +303,9 @@ def _undo_text(lang: str, doc: dict[str, str], holder: str) -> str:
     if lang == "ta":
         tail = f" {holder} ஆக மீண்டும் திறக்கப்பட்டது." if reopened else ""
         return f"ரத்து செய்யப்பட்டது {doc['name']}: {doc['summary']}.{tail}"
+    if lang == "si":
+        tail = f" {holder} ලෙස නැවත විවෘත කළා." if reopened else ""
+        return f"අවලංගු කළා {doc['name']}: {doc['summary']}.{tail}"
     tail = f" Reopened as {holder}." if reopened else ""
     return f"Cancelled {doc['name']}: {doc['summary']}.{tail}"
 
@@ -327,7 +333,7 @@ async def undo(req: UndoRequest) -> dict[str, Any]:
     svc.store.save_all()
     lang = detect_language(entry.transcript)
     text = _undo_text(lang, doc, holder)
-    speech = "ரத்து செய்யப்பட்டது." if lang == "ta" else "Cancelled."
+    speech = {"ta": "ரத்து செய்யப்பட்டது.", "si": "අවලංගු කළා."}.get(lang, "Cancelled.")
     log.info("undo %s %s -> %s", req.doctype, req.name, holder)
     return {"ok": True, "text": text, "speech": speech, "name": holder,
             "url": erp_link(req.doctype, holder)}  # fmt: skip

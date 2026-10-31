@@ -1,4 +1,4 @@
-"""Transcript normalisation: Tamil/English number words -> digits, language detection."""
+"""Transcript normalisation: Tamil/Sinhala/English number words -> digits, language detection."""
 
 from __future__ import annotations
 
@@ -58,21 +58,87 @@ EN_TENS: dict[str, int] = {
     "sixty": 60, "seventy": 70, "eighty": 80, "ninety": 90,
 }  # fmt: skip
 
-_TA_SCRIPT = re.compile(r"[஀-௿]")
+_TA_SCRIPT = re.compile(r"[\u0B80-\u0BFF]")
+_SI_SCRIPT = re.compile(r"[\u0D80-\u0DFF]")
 
 
 def detect_language(text: str) -> str:
-    """'ta' if the utterance contains Tamil script, else 'en'."""
+    """'ta' / 'si' if the utterance contains Tamil / Sinhala script, else 'en'."""
+    if _SI_SCRIPT.search(text):
+        return "si"
     return "ta" if _TA_SCRIPT.search(text) else "en"
 
 
-def _split_suffix(word: str, table: dict[str, int]) -> tuple[int, str] | None:
+def _split_suffix(
+    word: str, table: dict[str, int], suffixes: tuple[str, ...] = ()
+) -> tuple[int, str] | None:
+    suffixes = suffixes or TA_SUFFIXES
     for base, value in table.items():
         if word.startswith(base):
             suffix = word[len(base) :]
-            if suffix in TA_SUFFIXES or suffix.lstrip("-") in TA_SUFFIXES:
+            if suffix in suffixes or suffix.lstrip("-") in suffixes:
                 return value, suffix
     return None
+
+
+# Sinhala number words. Bare "එක" is left alone: it is also the definite article
+# ("job card එක" = "the job card"); "එකක්" / "එකයි" are 1.
+SI_UNITS: dict[str, int] = {
+    "එකක්": 1, "එකයි": 1,
+    "දෙක": 2, "තුන": 3, "හතර": 4, "පහ": 5, "හය": 6, "හත": 7, "අට": 8,
+    "නවය": 9, "නමය": 9, "බිංදුව": 0, "බින්දුව": 0,
+}  # fmt: skip
+SI_TENS: dict[str, int] = {
+    "දහය": 10, "එකොළහ": 11, "දොළහ": 12, "දහතුන": 13, "දාහතර": 14, "පහළොව": 15,
+    "දාසය": 16, "දාහත": 17, "දහඅට": 18, "දහනවය": 19, "විස්ස": 20, "තිහ": 30,
+    "හතළිහ": 40, "පනහ": 50, "හැට": 60, "හැත්තෑව": 70, "අසූව": 80, "අනූව": 90,
+    "සීය": 100, "සියය": 100,
+}  # fmt: skip
+# Combining forms written before a unit, as one word or two: විසිපහ / විසි පහ = 25.
+SI_PREFIX: dict[str, int] = {
+    "විසි": 20, "තිස්": 30, "හතළිස්": 40, "පනස්": 50, "හැට": 60, "හැත්තෑ": 70,
+    "අසූ": 80, "අනූ": 90, "එකසිය": 100,
+}  # fmt: skip
+# Endings glued to a number: දෙකක් (two of), දෙකට (to two), දෙකයි (just two), ...
+SI_SUFFIXES = ("", "ක්", "යි", "ට", "කට", "ක්ම", "කුත්", "ක")
+_SI_ZWJ = "\u200d"
+
+
+def _si_number(tok: str) -> tuple[int, str] | None:
+    tok = tok.replace(_SI_ZWJ, "")
+    if hit := _split_suffix(tok, SI_TENS, SI_SUFFIXES) or _split_suffix(tok, SI_UNITS, SI_SUFFIXES):
+        return hit
+    for pre, value in SI_PREFIX.items():  # one-word compound: විසිපහක් = 25 + ක්
+        if tok.startswith(pre) and (rest := _split_suffix(tok[len(pre) :], SI_UNITS, SI_SUFFIXES)):
+            return value + rest[0], rest[1]
+    return None
+
+
+def _sinhala_numbers(tokens: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        tok = tokens[i]
+        # Digit-by-digit part numbers: "හය දෙක බිංදුව පහ" -> 6205.
+        j, digits, last = i, "", None
+        while j < len(tokens) and (last := _split_suffix(tokens[j], SI_UNITS, SI_SUFFIXES)):
+            digits += str(last[0])
+            j += 1
+            if last[1]:
+                break
+        if len(digits) >= 2:
+            out.append(digits + (last[1] if last else ""))
+            i = j
+            continue
+        nxt = _split_suffix(tokens[i + 1], SI_UNITS, SI_SUFFIXES) if i + 1 < len(tokens) else None
+        if tok in SI_PREFIX and nxt:
+            out.append(f"{SI_PREFIX[tok] + nxt[0]}{nxt[1]}")
+            i += 2
+            continue
+        hit = _si_number(tok)
+        out.append(f"{hit[0]}{hit[1]}" if hit else tok)
+        i += 1
+    return out
 
 
 def _tamil_numbers(tokens: list[str]) -> list[str]:
@@ -165,7 +231,7 @@ def _english_numbers(tokens: list[str]) -> list[str]:
 
 _TOKEN = re.compile(r"\S+")
 # "two-க்கு" -> "two -க்கு" so the English word is parsed on its own.
-_MIXED_SUFFIX = re.compile(r"([A-Za-z0-9])-(?=[\u0B80-\u0BFF])")
+_MIXED_SUFFIX = re.compile(r"([A-Za-z0-9])-(?=[\u0B80-\u0BFF\u0D80-\u0DFF])")
 _TRAIL_PUNCT = re.compile(r"^(.*?)([.,!?;:]*)$")
 
 
@@ -187,11 +253,11 @@ def normalize_numbers(text: str) -> str:
     for word, p in zip(words, punct, strict=True):
         run.append(word)
         if p:
-            result += _english_numbers(_tamil_numbers(run))
+            result += _english_numbers(_sinhala_numbers(_tamil_numbers(run)))
             result[-1] += p
             run = []
     if run:
-        result += _english_numbers(_tamil_numbers(run))
+        result += _english_numbers(_sinhala_numbers(_tamil_numbers(run)))
     return " ".join(result)
 
 

@@ -7,7 +7,7 @@ const $ = (id) => document.getElementById(id);
 const el = {
   ptt: $("ptt"), pttLabel: $("ptt-label"), hint: $("hint"), transcript: $("transcript"),
   card: $("card"), cardStatus: $("card-status"), cardLinks: $("card-links"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
-  history: $("history"), home: $("home"), typed: $("typed"), typedInput: $("typed-input"),
+  history: $("history"), home: $("home"), speech: $("speech"), typed: $("typed"), typedInput: $("typed-input"),
 };
 
 // ---- settings: access key (?k=...) and home warehouse, remembered per device ----------
@@ -54,6 +54,8 @@ async function loadWarehouses() {
   }
 }
 el.home.addEventListener("change", () => store("fv.home", el.home.value));
+el.speech.value = store("fv.speech") || "ta";
+el.speech.addEventListener("change", () => store("fv.speech", el.speech.value));
 
 // ---- UI state ---------------------------------------------------------------------------
 
@@ -209,11 +211,11 @@ function pickVoice(lang) {
 function speak(text) {
   if (!("speechSynthesis" in window) || !text) return;
   speechSynthesis.cancel();
-  const tamil = /[஀-௿]/.test(text);
+  const lang = /[\u0D80-\u0DFF]/.test(text) ? "si" : /[\u0B80-\u0BFF]/.test(text) ? "ta" : "en";
   const u = new SpeechSynthesisUtterance(text);
-  const voice = tamil ? pickVoice("ta") : (pickVoice("en-in") || pickVoice("en"));
+  const voice = lang === "en" ? (pickVoice("en-in") || pickVoice("en")) : pickVoice(lang);
   if (voice) u.voice = voice;
-  u.lang = voice ? voice.lang : tamil ? "ta-IN" : "en-IN";
+  u.lang = voice ? voice.lang : { si: "si-LK", ta: "ta-IN", en: "en-IN" }[lang];
   u.rate = 1.0;
   speechSynthesis.speak(u);
 }
@@ -281,6 +283,7 @@ async function pressStart() {
       mode: awaitingAnswer ? "clarify" : "act",
       sample_rate: TARGET_RATE,
       home_warehouse: el.home.value || null,
+      speech: el.speech.value,
     }));
     for (const b of utt.buffered) utt.ws.send(b);
     utt.buffered = [];

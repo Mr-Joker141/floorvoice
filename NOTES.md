@@ -180,3 +180,17 @@ Running log of decisions and of places where reality differed from the docs.
   log. Completed Job Card: cancel, then insert an amended draft (`amended_from`), as
   ERPNext's Amend does; the reopened card is PO-JOB00002-1 and "job card two" still
   finds it. All four paths verified against ERPNext 15.122.
+
+## 2026-10-31 — Sinhala
+
+- Sinhala number words incl. glued endings (දෙකක්, දෙකට, විස්සක්), one-word compounds
+  (විසිපහ = 25) and digit-by-digit part numbers; bare "එක" is left alone (also "the").
+- Script detection `si`; Sinhala readbacks, questions, errors and undo text; Spark writes
+  its questions in Sinhala when told (verified in text mode).
+- Sinhala spoken aliases for all items and warehouses (222 ASR keywords). Aliases built on
+  "එක" ("ලයින් එකෙන්") clashed with "ස්ටෝර්ස් එකෙන්" (from the stores) and were dropped.
+- Warehouse candidates now need the name's words consecutively in the utterance, so a
+  quantity "2" plus "line" no longer suggests Line 2.
+- The PWA has a speech-language setting (தமிழ் / සිංහල / English) that selects
+  languageBias. Voice Transcribe accepts any language name silently (even "Klingon"), so
+  Sinhala support is unverified until tested on real Sinhala audio.

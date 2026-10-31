@@ -30,6 +30,7 @@ MAX_STEPS = 6
 TURN_BUDGET_S = 6.0
 HEDGE_AFTER_S = 2.5
 ALT_WAIT_S = 3.0  # longest wait for the second transcript before writing anyway
+LANGUAGE_NAMES = {"en": "English", "ta": "Tamil", "si": "Sinhala"}
 WRITE_WITH_ITEM = {"create_stock_entry", "create_material_request"}
 T = TypeVar("T")
 
@@ -224,7 +225,7 @@ class Agent:
         )
         context = {
             "today": date.today().isoformat(),
-            "language": "Tamil" if lang == "ta" else "English",
+            "language": LANGUAGE_NAMES.get(lang, "English"),
             "home_warehouse": home["name"] if home else self.executor.default_warehouse,
             "candidates": cands,
         }
@@ -236,7 +237,11 @@ class Agent:
                 "role": "user",
                 "content": f"Utterance: {text}\n\nContext: "
                 + json.dumps(context, ensure_ascii=False)
-                + ("\n\nReply language: Tamil (Tamil script)." if lang == "ta" else ""),
+                + (
+                    f"\n\nReply language: {LANGUAGE_NAMES[lang]} ({LANGUAGE_NAMES[lang]} script)."
+                    if lang in ("ta", "si")
+                    else ""
+                ),
             },
         ]
         return state
@@ -379,6 +384,8 @@ class Agent:
                     names.append(item["item_name"] if item else n)
                 if state.language == "ta":
                     question = " இல்லை ".join(f"{n}-ஆ" for n in choices) + "?"
+                elif state.language == "si":
+                    question = " ද ".join(choices) + " ද?"
                 else:
                     question = f"Did you say {' or '.join(choices)}?"
                 return question, names
@@ -441,9 +448,12 @@ def _sorry(lang: str, heard: str = "") -> str:
     if lang == "ta":
         prefix = f'நான் கேட்டது: "{heard}". ' if heard else ""
         return prefix + "பதிவு செய்ய முடியவில்லை. பொருள், அளவு, இடம் சொல்லி மீண்டும் சொல்லுங்கள்."
+    if lang == "si":
+        prefix = f'මට ඇහුණේ: "{heard}". ' if heard else ""
+        return prefix + "සටහන් කරන්න බැරි වුණා. බඩුව, ගණන, තැන කියලා ආයෙත් කියන්න."
     prefix = f'I heard "{heard}". ' if heard else ""
     return prefix + "I couldn't post that. Please say it again with the item, quantity and place."
 
 
 def _fallback_ask(state: AgentState) -> str:
-    return "எதை சொல்கிறீர்கள்?" if state.language == "ta" else "Which one do you mean?"
+    return {"ta": "எதை சொல்கிறீர்கள்?", "si": "කොයි එකද?"}.get(state.language, "Which one do you mean?")

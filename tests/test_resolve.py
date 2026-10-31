@@ -106,3 +106,12 @@ def test_confusable_part_numbers(masters: Masters) -> None:
     assert confusable(masters, "6205") == {"6201", "6204", "6305"}
     assert confusable(masters, "6305") == {"6205"}
     assert job_number("PO-JOB00005-1") == 5  # amended job card keeps its number
+
+
+def test_candidates_sinhala(masters: Masters) -> None:
+    c = candidates(masters, normalize_numbers("බෙයාරිං 6205 දෙකක් ස්ටෝර්ස් එකෙන් ලයින් දෙකට දාන්න"))
+    assert [i["item_code"] for i in c["items"]] == ["BRG-6205"]
+    assert sorted(c["warehouses"]) == ["Line 2 - FVD", "Stores - FVD"]  # "එකෙන්" is not line 1
+    c = candidates(masters, "ග්‍රීස් කිලෝ 2ක් ලයින් වන් එකෙන් ගන්න")  # with zero-width joiner
+    assert [i["item_code"] for i in c["items"]] == ["GRS-EP2"]
+    assert c["warehouses"] == ["Line 1 - FVD"]

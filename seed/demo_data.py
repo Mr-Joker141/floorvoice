@@ -26,14 +26,36 @@ BOT_ROLES = [
 
 # The three floor warehouses. "Stores" is created by the setup wizard.
 WAREHOUSES: list[dict[str, object]] = [
-    {"warehouse_name": "Stores", "aliases": ["store", "stores", "ஸ்டோர்", "ஸ்டோர்ஸ்", "களஞ்சியம்"]},
+    {
+        "warehouse_name": "Stores",
+        "aliases": ["store", "stores", "ஸ்டோர்", "ஸ்டோர்ஸ்", "களஞ்சியம்", "ස්ටෝර්ස්", "ස්ටෝර්", "ගබඩාව"],
+    },
     {
         "warehouse_name": "Line 1",
-        "aliases": ["line one", "line 1", "லைன் ஒன்று", "லைன் 1", "முதல் லைன்"],
+        "aliases": [
+            "line one",
+            "line 1",
+            "லைன் ஒன்று",
+            "லைன் 1",
+            "முதல் லைன்",
+            "ලයින් 1",
+            "ලයින් වන්",
+            "පළමු ලයින්",
+        ],
     },
     {
         "warehouse_name": "Line 2",
-        "aliases": ["line two", "line 2", "லைன் இரண்டு", "லைன் 2", "இரண்டாவது லைன்"],
+        "aliases": [
+            "line two",
+            "line 2",
+            "லைன் இரண்டு",
+            "லைன் 2",
+            "இரண்டாவது லைன்",
+            "ලයින් 2",
+            "ලයින් දෙක",
+            "ලයින් ටූ",
+            "දෙවන ලයින්",
+        ],
     },
 ]
 
@@ -73,6 +95,23 @@ ITEMS: list[tuple[str, str, str, str, float, list[str]]] = [
     ("ASSY-GBX", "Gearbox Assembly", FG, "Nos", 0, ["gearbox", "gear box", "கியர்பாக்ஸ்"]),
     ("ASSY-ROLL", "Conveyor Roller Assembly", FG, "Nos", 0, ["roller", "conveyor roller", "ரோலர்"]),
 ]
+
+# Sinhala spoken names (transliterations as Voice Transcribe writes them, plus Sinhala words).
+SI_ALIASES: dict[str, list[str]] = {
+    "BRG-6201": ["බෙයාරිං", "බෙයාරිං 6201"], "BRG-6204": ["බෙයාරිං", "බෙයාරිං 6204"],
+    "BRG-6205": ["බෙයාරිං", "බෙයාරිං 6205"], "BRG-6305": ["බෙයාරිං", "බෙයාරිං 6305"],
+    "BLT-M8X30": ["බෝල්ට්", "බෝල්ට් M8"], "BLT-M10X40": ["බෝල්ට්", "බෝල්ට් M10"],
+    "NUT-M8": ["නට්", "නට් M8"], "NUT-M10": ["නට්", "නට් M10"],
+    "WSH-M8": ["වොෂර්"], "SCR-M5X20": ["ඉස්කුරුප්පු", "ස්ක්රූ"],
+    "GR-SP40": ["ගියර් 40"], "GR-SP60": ["ගියර් 60"], "SPR-C20": ["ස්ප්රින්ග්"],
+    "VBT-A42": ["වී බෙල්ට්", "බෙල්ට් A42"], "VBT-B50": ["වී බෙල්ට් B50", "බෙල්ට් B50"],
+    "SHF-25": ["ෂැෆ්ට්"], "CPL-L100": ["කප්ලින්"], "SEAL-35": ["ඔයිල් සීල්", "සීල්"],
+    "ORG-20": ["ඕ රින්"], "GRS-EP2": ["ග්රීස්"], "CHN-08B": ["චේන්", "දම්වැල"],
+    "SPK-08B17": ["ස්ප්රොකට්"], "PLT-MS6": ["ප්ලේට්", "තහඩුව"], "PIN-D6": ["පින්"],
+    "BSH-25": ["බුෂ්"], "KEY-8X7": ["කී"], "CLP-H20": ["ක්ලෑම්ප්"],
+    "ASSY-PUMP": ["පොම්පය", "පම්ප්"], "ASSY-GBX": ["ගියර් බොක්ස්"], "ASSY-ROLL": ["රෝලර්"],
+}  # fmt: skip
+ITEMS = [(c, n, g, u, r, [*a, *SI_ALIASES.get(c, [])]) for c, n, g, u, r, a in ITEMS]
 
 # Opening stock: warehouse -> {item_code: qty}
 OPENING_STOCK: dict[str, dict[str, float]] = {

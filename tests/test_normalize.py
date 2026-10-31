@@ -36,3 +36,25 @@ def test_detect_language() -> None:
 
 def test_token_count() -> None:
     assert token_count("  send me  ") == 2
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("බෙයාරිං 6205 දෙකක් ස්ටෝර්ස් එකෙන් ලයින් දෙකට දාන්න",
+         "බෙයාරිං 6205 2ක් ස්ටෝර්ස් එකෙන් ලයින් 2ට දාන්න"),
+        ("Job card තුන ඉවරයි, කෑලි විස්සක්", "Job card 3 ඉවරයි, කෑලි 20ක්"),
+        ("මට බෝල්ට් දහයක් එවන්න", "මට බෝල්ට් 10ක් එවන්න"),
+        ("කෑලි විසිපහක්", "කෑලි 25ක්"),
+        ("විසි පහ", "25"),
+        ("බෙයාරිං හය දෙක බිංදුව පහ", "බෙයාරිං 6205"),
+        ("job card එක ඉවරයි", "job card එක ඉවරයි"),  # එක = "the", not 1
+        ("line two-ට", "line 2 -ට"),
+    ],
+)  # fmt: skip
+def test_normalize_sinhala(text: str, expected: str) -> None:
+    assert normalize_numbers(text) == expected
+
+
+def test_detect_sinhala() -> None:
+    assert detect_language("මට බෝල්ට් 10ක් එවන්න") == "si"

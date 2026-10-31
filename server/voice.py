@@ -2,7 +2,7 @@
 
 Client protocol (one utterance per connection):
   -> {"type": "start", "session_id": str, "mode": "act"|"clarify", "sample_rate": 24000,
-      "home_warehouse": str|null}
+      "home_warehouse": str|null, "speech": "ta"|"si"|"en"}
   -> binary frames: s16le mono PCM at sample_rate
   -> {"type": "stop"}            (or {"type": "cancel"} to drop the utterance)
   <- {"type": "partial", "text": str}         while speaking
@@ -32,6 +32,9 @@ if TYPE_CHECKING:
 log = logging.getLogger("floorvoice.voice")
 
 FINAL_TIMEOUT = 10.0
+# Worker's chosen speech language (PWA setting) -> Voice Transcribe languageBias.
+SPEECH_LANGUAGES = {"ta": ("Tamil", "English"), "si": ("Sinhala", "English"),
+                    "en": ("English",)}  # fmt: skip
 MAX_UTTERANCE_S = 60
 
 
@@ -53,13 +56,17 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
     mode = start.get("mode", "act")
     rate = int(start.get("sample_rate", 24000))
     home = start.get("home_warehouse")
+    languages = SPEECH_LANGUAGES.get(str(start.get("speech") or "ta"), SPEECH_LANGUAGES["ta"])
     if not session_id or rate not in (16000, 24000):
         await _send(ws, {"type": "error", "message": "bad start message"})
         await ws.close(code=1008)
         return
 
     asr = RealtimeSession(
-        svc.settings.meta_api_key, sample_rate=rate, keywords=await asr_keywords(svc)
+        svc.settings.meta_api_key,
+        sample_rate=rate,
+        keywords=await asr_keywords(svc),
+        languages=languages,
     )
     queue: asyncio.Queue[bytes | None] = asyncio.Queue()
     opened = asyncio.Event()
@@ -106,7 +113,7 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
                         # Independent second transcript, used to double-check part numbers.
                         alt = asyncio.ensure_future(transcribe_file(
                             svc.settings.meta_api_key, pcm_to_wav(bytes(pcm), rate),
-                            keywords=asr.keywords,
+                            keywords=asr.keywords, languages=languages,
                         ))  # fmt: skip
                     break
                 if kind == "cancel":

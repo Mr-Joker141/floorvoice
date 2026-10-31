@@ -1,4 +1,4 @@
-"""One-line confirmations built from posted documents (English and Tamil)."""
+"""One-line confirmations built from posted documents (English, Tamil, Sinhala)."""
 
 from __future__ import annotations
 
@@ -11,6 +11,11 @@ DOCTYPE_SPOKEN = {
         "Stock Entry": "stock entry",
         "Job Card": "job card",
         "Material Request": "material request",
+    },
+    "si": {
+        "Stock Entry": "ස්ටොක් එන්ට්රි",
+        "Job Card": "ජොබ් කාඩ්",
+        "Material Request": "මැටීරියල් රික්වෙස්ට්",
     },
     "ta": {
         "Stock Entry": "ஸ்டாக் என்ட்ரி",
@@ -35,7 +40,10 @@ def readback(posted: list[PostedDoc], lang: str) -> tuple[str, str]:
     for p in posted:
         dt = DOCTYPE_SPOKEN[lang][p.doctype]
         n = spoken_number(p.name)
-        if lang == "ta":
+        if lang == "si":
+            display.append(f"සටහන් කළා {p.name}: {p.summary}.")
+            speech.append(f"{p.summary}. {dt} {n} සටහන් කළා.")
+        elif lang == "ta":
             display.append(f"பதிவானது {p.name}: {p.summary}.")
             speech.append(f"{p.summary}. {dt} {n} பதிவானது.")
         else:

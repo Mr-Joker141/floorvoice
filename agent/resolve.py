@@ -13,8 +13,8 @@ MAX_RESULTS = 5
 MIN_SCORE = 0.5
 
 # Letters plus the Tamil block, so vowel signs/virama (not \w in Python) stay inside words.
-_WORD = re.compile(r"[0-9]+|(?:[^\W\d_]|[\u0B80-\u0BFF])+")
-_TAMIL = re.compile(r"[\u0B80-\u0BFF]")
+_WORD = re.compile(r"[0-9]+|(?:[^\W\d_]|[\u0B80-\u0BFF\u0D80-\u0DFF])+")
+_INDIC = re.compile(r"[\u0B80-\u0BFF\u0D80-\u0DFF]")  # Tamil, Sinhala
 # "PO-JOB00005" and its amendment "PO-JOB00005-1" are both card 5.
 _JOB_NO = re.compile(r"JOB0*(\d+)|(\d+)$")
 # Filler words that should not count against a match.
@@ -26,7 +26,8 @@ STOPWORDS = {
 
 def tokens(text: str) -> list[str]:
     """Lower-cased word/number tokens; letters and digits are split ("M8x30" -> m, 8, x, 30)."""
-    return [t.casefold() for t in _WORD.findall(text)]
+    # Zero-width joiners (Sinhala conjuncts like ස්ප්‍රින්ග්) are optional in ASR output.
+    return [t.casefold() for t in _WORD.findall(text.replace("\u200d", ""))]
 
 
 def _stem(tok: str) -> str:
@@ -47,8 +48,8 @@ def _tok_match(q: str, c: str) -> float:
         return 1.0
     if len(qs) >= 3 and cs.startswith(qs):
         return 0.85
-    if len(cs) >= 3 and _TAMIL.match(qs) and qs.startswith(cs):
-        return 0.9  # Tamil case suffix glued on: "ஸ்டோர்ஸ்லிருந்து" = "from stores"
+    if len(cs) >= 3 and _INDIC.match(qs) and qs.startswith(cs):
+        return 0.9  # case suffix glued on: "ஸ்டோர்ஸ்லிருந்து" = "from stores", "ලයින්වලට"
     if min(len(qs), len(cs)) < 4:
         return 0.0  # short words only match exactly ("to" must not match "two")
     ratio = SequenceMatcher(None, qs, cs).ratio()
@@ -238,6 +239,17 @@ def _coverage(text_toks: set[str], cand: str) -> float:
     return hit / len(c_toks) + 0.01 * hit
 
 
+def _in_sequence(said: list[str], name: str) -> bool:
+    """`name`'s words appear consecutively in the utterance ("line 2", not "2 kg ... line")."""
+    want = tokens(name)
+    if not want:
+        return False
+    for i in range(len(said) - len(want) + 1):
+        if all(_tok_match(said[i + k], w) >= 0.85 for k, w in enumerate(want)):
+            return True
+    return False
+
+
 def _top_tier(scored: list[tuple[float, dict[str, Any]]], floor: float) -> list[dict[str, Any]]:
     hits = [(s, x) for s, x in scored if s >= floor]
     if not hits:
@@ -282,14 +294,14 @@ def candidates(m: Masters, utterance: str) -> dict[str, list[dict[str, Any]]]:
         ],
         0.5,
     )
+    said = tokens(utterance)
     whs = [
         w
         for w in m.warehouses
-        if max(
-            _coverage(heard, s)
+        if any(
+            _in_sequence(said, s)
             for s in [w["warehouse_name"], *split_aliases(w.get("voice_aliases"))]
         )
-        >= 0.85
     ]
     cards = [j for j in m.job_cards if job_number(j["name"]) in _card_numbers(utterance)]
     return {
