@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent.loop import AgentResult, AgentState
-from agent.normalize import detect_language, token_count
+from agent.normalize import reply_language, token_count
 from agent.runtime import Runtime, build_runtime
 from agent.tools import PostedDoc, ToolError
 from erp.client import ErpError
@@ -38,6 +38,7 @@ class ActRequest(BaseModel):
     transcript: str
     session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     home_warehouse: str | None = None
+    speech: str = ""  # worker's chosen language: ta | si | en
 
 
 class ClarifyRequest(BaseModel):
@@ -65,6 +66,7 @@ class HistoryEntry:
     text: str
     documents: list[dict[str, str]] = field(default_factory=list)
     answers: list[str] = field(default_factory=list)
+    language: str = ""
 
 
 @dataclass
@@ -119,8 +121,8 @@ class AgentFailure(RuntimeError):
     pass
 
 
-def _repeat_prompt(transcript: str) -> str:
-    lang = detect_language(transcript)
+def _repeat_prompt(transcript: str, speech: str = "") -> str:
+    lang = reply_language(transcript, speech)
     if lang == "ta":
         return "சரியாக கேட்கவில்லை. மீண்டும் சொல்லுங்கள்."
     if lang == "si":
@@ -172,6 +174,7 @@ class Service:
         transcript: str,
     ) -> ActResponse:
         entry.kind = result.kind
+        entry.language = state.language
         entry.text = result.text
         entry.documents = _docs(result)
         if result.kind == "ask":
@@ -199,11 +202,12 @@ class Service:
         home_warehouse: str | None = None,
         *,
         alt_transcript: asyncio.Future[str] | None = None,
+        speech: str = "",
     ) -> ActResponse:
         t0 = time.monotonic()
         transcript = transcript.strip()
         if token_count(transcript) < MIN_TOKENS:
-            text = _repeat_prompt(transcript)
+            text = _repeat_prompt(transcript, speech)
             return ActResponse(session_id=session_id, kind="repeat", text=text, speech=text,
                                transcript=transcript, elapsed_ms=0)  # fmt: skip
         self.store.pending.pop(session_id, None)  # a new utterance abandons an open question
@@ -216,7 +220,10 @@ class Service:
         )
         try:
             state, result = await self.rt.agent.act(
-                transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript
+                transcript,
+                home_warehouse=home_warehouse,
+                alt_transcript=alt_transcript,
+                speech=speech,
             )
         except Exception as e:
             log.exception("agent failed for %r", transcript)
@@ -227,7 +234,8 @@ class Service:
         t0 = time.monotonic()
         answer = answer.strip()
         if not answer:
-            text = _repeat_prompt(answer)
+            pending = self.store.pending.get(session_id)
+            text = _repeat_prompt(answer, pending.state.language if pending else "")
             return ActResponse(session_id=session_id, kind="repeat", text=text, speech=text,
                                elapsed_ms=0)  # fmt: skip
         pending = self.store.take_pending(session_id)
@@ -278,7 +286,9 @@ def require_key(request: Request) -> None:
 @app.post("/act", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def act(req: ActRequest) -> ActResponse:
     try:
-        return await service().act(req.transcript, req.session_id, req.home_warehouse)
+        return await service().act(
+            req.transcript, req.session_id, req.home_warehouse, speech=req.speech
+        )
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
 
@@ -331,7 +341,7 @@ async def undo(req: UndoRequest) -> dict[str, Any]:
     doc["undone"] = "1"
     doc["now"] = holder
     svc.store.save_all()
-    lang = detect_language(entry.transcript)
+    lang = entry.language or reply_language(entry.transcript)
     text = _undo_text(lang, doc, holder)
     speech = {"ta": "ரத்து செய்யப்பட்டது.", "si": "අවලංගු කළා."}.get(lang, "Cancelled.")
     log.info("undo %s %s -> %s", req.doctype, req.name, holder)

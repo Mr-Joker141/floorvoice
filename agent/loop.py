@@ -16,7 +16,7 @@ from typing import Any, Literal, Protocol, TypeVar
 
 from openai import AsyncOpenAI
 
-from agent.normalize import detect_language, normalize_numbers
+from agent.normalize import normalize_numbers, reply_language
 from agent.prompt import SYSTEM_PROMPT
 from agent.readback import readback
 from agent.resolve import candidates, code_numbers, confusable, spoken_numbers
@@ -28,6 +28,8 @@ MAX_STEPS = 6
 # Spark time allowed per turn (act or clarify). With ~0.4-1 s of ASR this keeps
 # release-to-confirmation under the 8 s target; over budget we ask the worker to repeat.
 TURN_BUDGET_S = 6.0
+# Spark takes ~2.5-3 s per call on Sinhala (vs ~1.5 s), so two steps need more room.
+SINHALA_BUDGET_S = 9.0
 HEDGE_AFTER_S = 2.5
 ALT_WAIT_S = 3.0  # longest wait for the second transcript before writing anyway
 LANGUAGE_NAMES = {"en": "English", "ta": "Tamil", "si": "Sinhala"}
@@ -215,9 +217,10 @@ class Agent:
         *,
         home_warehouse: str | None = None,
         alt_transcript: asyncio.Future[str] | None = None,
+        speech: str = "",
     ) -> AgentState:
-        text = normalize_numbers(transcript.strip())
-        lang = detect_language(text)
+        text = normalize_numbers(transcript.strip(), sinhala_latin=speech == "si")
+        lang = reply_language(text, speech)
         masters = await self.cache.get()
         cands = candidates(masters, text)
         home = masters.warehouse(home_warehouse or "") or masters.warehouse(
@@ -252,14 +255,15 @@ class Agent:
         *,
         home_warehouse: str | None = None,
         alt_transcript: asyncio.Future[str] | None = None,
+        speech: str = "",
     ) -> tuple[AgentState, AgentResult]:
         state = await self.start(
-            transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript
+            transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript, speech=speech
         )
         return state, await self.run(state)
 
     async def clarify(self, state: AgentState, answer: str) -> AgentResult:
-        answer = normalize_numbers(answer.strip())
+        answer = normalize_numbers(answer.strip(), sinhala_latin=state.language == "si")
         if state.pending_call_id:
             state.messages.append(
                 {
@@ -275,14 +279,17 @@ class Agent:
         return await self.run(state)
 
     async def run(self, state: AgentState) -> AgentResult:
-        deadline = time.monotonic() + self.turn_budget
+        budget = (
+            max(self.turn_budget, SINHALA_BUDGET_S) if state.language == "si" else self.turn_budget
+        )
+        deadline = time.monotonic() + budget
         for _ in range(MAX_STEPS):
             try:
                 reply = await asyncio.wait_for(
                     self.completer(state.messages), max(0.1, deadline - time.monotonic())
                 )
             except TimeoutError:
-                log.warning("turn over %.1fs budget for %r", self.turn_budget, state.transcript)
+                log.warning("turn over %.1fs budget for %r", budget, state.transcript)
                 if state.ctx.posted:
                     return self._done(state)
                 return AgentResult("error", _sorry(state.language, state.transcript))

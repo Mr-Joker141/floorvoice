@@ -58,3 +58,48 @@ def test_normalize_sinhala(text: str, expected: str) -> None:
 
 def test_detect_sinhala() -> None:
     assert detect_language("මට බෝල්ට් 10ක් එවන්න") == "si"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("බෙයාරිං හැට දෙක බිංදුව පහ දෙකක්", "බෙයාරිං 6205 2ක්"),  # 62|05, then qty
+        ("බෙයාරිං හැටදෙක බිංදුව පහ", "බෙයාරිං 6205"),
+        ("ලයින් දෙකට", "ලයින් 2ට"),
+    ],
+)
+def test_sinhala_code_in_pairs(text: str, expected: str) -> None:
+    assert normalize_numbers(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("job card tuna ivaray kalivisak.", "job card 3 ivaray kali 20."),
+        ("M10 bolt dahayak evanna", "M10 bolt 10 evanna"),
+        ("bearing heta deka binduwa paha dekak stores eken", "bearing 6205 2 stores eken"),
+        ("bearing haya deka binduwa paha", "bearing 6205"),
+        ("visipahak", "25"),
+    ],
+)
+def test_sinhala_latin(text: str, expected: str) -> None:
+    assert normalize_numbers(text, sinhala_latin=True) == expected
+
+
+def test_sinhala_latin_only_when_chosen() -> None:
+    assert normalize_numbers("job card tuna") == "job card tuna"
+
+
+def test_reply_language_follows_choice() -> None:
+    from agent.normalize import reply_language
+
+    assert reply_language("job card 3 ivaray kali 20", "si") == "si"
+    assert reply_language("மட்ட bolt 10 evan", "si") == "si"
+    assert reply_language("job card five completed", "ta") == "en"
+    assert reply_language("බෝල්ට් 10", "ta") == "ta"
+    assert reply_language("இரண்டு bearing", "") == "ta"
+
+
+def test_sinhala_misspellings() -> None:
+    assert normalize_numbers("job card තුන ඉවරයි කැලිවිස") == "job card 3 ඉවරයි කැලි 20"
+    assert normalize_numbers("line දකට") == "line 2ට"

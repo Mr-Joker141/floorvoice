@@ -69,6 +69,17 @@ def detect_language(text: str) -> str:
     return "ta" if _TA_SCRIPT.search(text) else "en"
 
 
+def reply_language(text: str, speech: str = "") -> str:
+    """Language to answer in. A worker who chose Sinhala gets Sinhala even when the
+    recogniser wrote Latin or Tamil letters; Tamil and English follow the utterance."""
+    if speech == "si":
+        return "si"
+    lang = detect_language(text)
+    if speech == "ta" and lang == "si":
+        return "ta"
+    return lang
+
+
 def _split_suffix(
     word: str, table: dict[str, int], suffixes: tuple[str, ...] = ()
 ) -> tuple[int, str] | None:
@@ -85,12 +96,12 @@ def _split_suffix(
 # ("job card එක" = "the job card"); "එකක්" / "එකයි" are 1.
 SI_UNITS: dict[str, int] = {
     "එකක්": 1, "එකයි": 1,
-    "දෙක": 2, "තුන": 3, "හතර": 4, "පහ": 5, "හය": 6, "හත": 7, "අට": 8,
+    "දෙක": 2, "දක": 2, "තුන": 3, "හතර": 4, "පහ": 5, "හය": 6, "හත": 7, "අට": 8,
     "නවය": 9, "නමය": 9, "බිංදුව": 0, "බින්දුව": 0,
 }  # fmt: skip
 SI_TENS: dict[str, int] = {
     "දහය": 10, "එකොළහ": 11, "දොළහ": 12, "දහතුන": 13, "දාහතර": 14, "පහළොව": 15,
-    "දාසය": 16, "දාහත": 17, "දහඅට": 18, "දහනවය": 19, "විස්ස": 20, "තිහ": 30,
+    "දාසය": 16, "දාහත": 17, "දහඅට": 18, "දහනවය": 19, "විස්ස": 20, "විස": 20, "තිහ": 30,
     "හතළිහ": 40, "පනහ": 50, "හැට": 60, "හැත්තෑව": 70, "අසූව": 80, "අනූව": 90,
     "සීය": 100, "සියය": 100,
 }  # fmt: skip
@@ -114,29 +125,142 @@ def _si_number(tok: str) -> tuple[int, str] | None:
     return None
 
 
+# Misspellings Voice Transcribe produces ("දක" for දෙක, "විස" for විස්ස) are in the tables;
+# "කැලිවිස" = කෑලි (pieces) + විස (20) glued together.
+_SI_PIECES = re.compile(r"^(කෑලි|කැලි|කලි)(.+)$")
+
+
 def _sinhala_numbers(tokens: list[str]) -> list[str]:
+    split: list[str] = []
+    for tok in tokens:
+        m = _SI_PIECES.match(tok)
+        split += [m.group(1), m.group(2)] if m and _si_number(m.group(2)) else [tok]
+    tokens = split
+
+    def digit(tok: str) -> tuple[int, str] | None:
+        # "දෙකක්" (two of) / "දෙකට" (to two) are a quantity or a line, never a code digit.
+        hit = _split_suffix(tok, SI_UNITS, SI_SUFFIXES)
+        return hit if hit and hit[1] in ("", "යි") else None
+
+    def digit_run(start: int) -> tuple[str, str, int]:
+        j, digits, suffix = start, "", ""
+        while j < len(tokens) and (d := digit(tokens[j])):
+            digits += str(d[0])
+            j += 1
+            if d[1]:
+                suffix = d[1]
+                break
+        return digits, suffix, j
+
     out: list[str] = []
     i = 0
     while i < len(tokens):
         tok = tokens[i]
         # Digit-by-digit part numbers: "හය දෙක බිංදුව පහ" -> 6205.
-        j, digits, last = i, "", None
-        while j < len(tokens) and (last := _split_suffix(tokens[j], SI_UNITS, SI_SUFFIXES)):
-            digits += str(last[0])
-            j += 1
-            if last[1]:
-                break
+        digits, suffix, j = digit_run(i)
         if len(digits) >= 2:
-            out.append(digits + (last[1] if last else ""))
+            out.append(digits + suffix)
             i = j
             continue
+        compound: tuple[int, str] | None = None
+        j = i + 1
         nxt = _split_suffix(tokens[i + 1], SI_UNITS, SI_SUFFIXES) if i + 1 < len(tokens) else None
         if tok in SI_PREFIX and nxt:
-            out.append(f"{SI_PREFIX[tok] + nxt[0]}{nxt[1]}")
-            i += 2
+            compound, j = (SI_PREFIX[tok] + nxt[0], nxt[1]), i + 2
+        else:
+            compound = _si_number(tok)
+        if compound is not None:
+            value, suffix = compound
+            if not suffix and value >= 20:
+                # Codes said in pairs: "හැට දෙක බිංදුව පහ" = 62|05.
+                tail, tail_suffix, k = digit_run(j)
+                if len(tail) >= 2:
+                    out.append(f"{value}{tail}{tail_suffix}")
+                    i = k
+                    continue
+            out.append(f"{value}{suffix}")
+            i = j
             continue
-        hit = _si_number(tok)
-        out.append(f"{hit[0]}{hit[1]}" if hit else tok)
+        out.append(tok)
+        i += 1
+    return out
+
+
+# Voice Transcribe often writes Sinhala speech in Latin letters ("job card tuna ivarai,
+# kali visak"). Only used when the worker chose Sinhala: "tuna", "even", "ata" are English too.
+SI_ROMAN_UNITS: dict[str, int] = {
+    "ekak": 1, "ekai": 1, "ekay": 1,
+    "deka": 2, "dekak": 2, "dekai": 2, "dekay": 2, "dekata": 2, "deke": 2,
+    "tuna": 3, "thuna": 3, "tunak": 3, "thunak": 3, "tunai": 3, "tunay": 3, "tun": 3, "thun": 3,
+    "hatara": 4, "hathara": 4, "hatarak": 4, "hatharak": 4,
+    "paha": 5, "pahak": 5, "pahai": 5, "pahay": 5, "pahata": 5,
+    "haya": 6, "hayak": 6, "hatha": 7, "hatak": 7, "hathak": 7, "ata": 8, "atak": 8,
+    "namaya": 9, "navaya": 9, "binduwa": 0, "binduva": 0, "bindu": 0,
+}  # fmt: skip
+SI_ROMAN_TENS: dict[str, int] = {
+    "dahaya": 10, "dahayak": 10, "dahai": 10, "dolaha": 12, "dolahak": 12, "pahalowa": 15,
+    "visse": 20, "wisse": 20, "vissa": 20, "wissa": 20, "visak": 20, "wisak": 20,
+    "vissak": 20, "wissak": 20, "tiha": 30, "thiha": 30, "tihak": 30, "panaha": 50,
+    "panahak": 50, "siyaya": 100, "siyayak": 100,
+}  # fmt: skip
+SI_ROMAN_PREFIX: dict[str, int] = {
+    "visi": 20, "wisi": 20, "tis": 30, "this": 30, "hatalis": 40, "panas": 50,
+    "heta": 60, "haeta": 60, "hetta": 60, "asu": 80, "anu": 90,
+}  # fmt: skip
+
+
+# Bare digit words that can form a spoken part number; suffixed forms ("dekak") are quantities.
+_SI_ROMAN_DIGITS = {"deka", "tuna", "thuna", "hatara", "hathara", "paha", "haya", "hatha",
+                    "ata", "namaya", "navaya", "binduwa", "binduva", "bindu"}  # fmt: skip
+# "kalivisak" = kali (pieces) + visak (20).
+_SI_ROMAN_GLUED = re.compile(r"^(kali|keli|kaeli)(\w+)$", re.IGNORECASE)
+
+
+def _roman_sinhala_numbers(tokens: list[str]) -> list[str]:
+    def digit_run(start: int) -> tuple[str, int]:
+        j, digits = start, ""
+        while j < len(tokens) and tokens[j].lower() in _SI_ROMAN_DIGITS:
+            digits += str(SI_ROMAN_UNITS[tokens[j].lower()])
+            j += 1
+        return digits, j
+
+    split: list[str] = []
+    for tok in tokens:
+        m = _SI_ROMAN_GLUED.match(tok)
+        rest = m.group(2).lower() if m else ""
+        if m and (rest in SI_ROMAN_TENS or rest in SI_ROMAN_UNITS):
+            split += [m.group(1), m.group(2)]
+        else:
+            split.append(tok)
+    tokens = split
+
+    out: list[str] = []
+    i = 0
+    while i < len(tokens):
+        low = tokens[i].lower()
+        digits, j = digit_run(i)  # "hatha deka binduwa paha" = 6205
+        if len(digits) >= 2:
+            out.append(digits)
+            i = j
+            continue
+        compound, j = None, i + 1
+        nxt = tokens[i + 1].lower() if i + 1 < len(tokens) else ""
+        if low in SI_ROMAN_PREFIX and nxt in SI_ROMAN_UNITS:
+            compound, j = SI_ROMAN_PREFIX[low] + SI_ROMAN_UNITS[nxt], i + 2  # "visi paha" = 25
+        else:
+            for pre, value in SI_ROMAN_PREFIX.items():  # glued: "visipaha", "hetadeka"
+                if low.startswith(pre) and low[len(pre) :] in SI_ROMAN_UNITS:
+                    compound = value + SI_ROMAN_UNITS[low[len(pre) :]]
+        if compound is not None:
+            # Part numbers are often said in pairs: "heta deka binduwa paha" = 62|05.
+            tail, k = digit_run(j)
+            out.append(f"{compound}{tail}" if len(tail) >= 2 else str(compound))
+            i = k if len(tail) >= 2 else j
+            continue
+        hit = SI_ROMAN_TENS.get(low)
+        if hit is None:
+            hit = SI_ROMAN_UNITS.get(low)
+        out.append(str(hit) if hit is not None else tokens[i])
         i += 1
     return out
 
@@ -235,8 +359,16 @@ _MIXED_SUFFIX = re.compile(r"([A-Za-z0-9])-(?=[\u0B80-\u0BFF\u0D80-\u0DFF])")
 _TRAIL_PUNCT = re.compile(r"^(.*?)([.,!?;:]*)$")
 
 
-def normalize_numbers(text: str) -> str:
-    """Replace spelled-out Tamil/English numbers with digits; keep everything else."""
+def normalize_numbers(text: str, *, sinhala_latin: bool = False) -> str:
+    """Replace spelled-out Tamil/Sinhala/English numbers with digits; keep everything else.
+
+    sinhala_latin: also read Sinhala number words written in Latin letters ("dahayak").
+    """
+
+    def numbers(run: list[str]) -> list[str]:
+        run = _sinhala_numbers(_tamil_numbers(run))
+        return _english_numbers(_roman_sinhala_numbers(run) if sinhala_latin else run)
+
     text = _MIXED_SUFFIX.sub(r"\1 -", text.translate(TAMIL_DIGITS))
     raw = _TOKEN.findall(text)
     # Strip trailing punctuation for matching, then put it back on the last token of a run.
@@ -253,11 +385,11 @@ def normalize_numbers(text: str) -> str:
     for word, p in zip(words, punct, strict=True):
         run.append(word)
         if p:
-            result += _english_numbers(_sinhala_numbers(_tamil_numbers(run)))
+            result += numbers(run)
             result[-1] += p
             run = []
     if run:
-        result += _english_numbers(_sinhala_numbers(_tamil_numbers(run)))
+        result += numbers(run)
     return " ".join(result)
 
 

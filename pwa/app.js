@@ -392,7 +392,7 @@ async function answerTyped(text) {
     const r = awaitingAnswer
       ? await api("/clarify", { session_id: sessionId, answer: text })
       : await api("/act", { session_id: sessionId, transcript: text,
-                            home_warehouse: el.home.value || null });
+                            home_warehouse: el.home.value || null, speech: el.speech.value });
     busy = false;
     handleResult(r);
   } catch (e) {

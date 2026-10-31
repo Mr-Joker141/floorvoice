@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -38,9 +39,17 @@ SPEECH_LANGUAGES = {"ta": ("Tamil", "English"), "si": ("Sinhala", "English"),
 MAX_UTTERANCE_S = 60
 
 
-async def asr_keywords(svc: Service) -> list[str]:
+# Aliases in the other Indic script pull the recogniser into that script: Tamil keywords
+# made it write Sinhala speech in Tamil letters.
+_OTHER_SCRIPT = {"si": re.compile(r"[\u0B80-\u0BFF]"), "ta": re.compile(r"[\u0D80-\u0DFF]"),
+                 "en": re.compile(r"[\u0B80-\u0BFF\u0D80-\u0DFF]")}  # fmt: skip
+
+
+async def asr_keywords(svc: Service, speech: str = "ta") -> list[str]:
     m = await svc.rt.cache.get()
-    return keywords_from_masters(m.items, m.warehouses, m.job_cards)
+    words = keywords_from_masters(m.items, m.warehouses, m.job_cards)
+    other = _OTHER_SCRIPT.get(speech)
+    return [w for w in words if not (other and other.search(w))]
 
 
 async def handle_audio(ws: WebSocket, svc: Service) -> None:
@@ -56,7 +65,10 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
     mode = start.get("mode", "act")
     rate = int(start.get("sample_rate", 24000))
     home = start.get("home_warehouse")
-    languages = SPEECH_LANGUAGES.get(str(start.get("speech") or "ta"), SPEECH_LANGUAGES["ta"])
+    speech = str(start.get("speech") or "ta")
+    if speech not in SPEECH_LANGUAGES:
+        speech = "ta"
+    languages = SPEECH_LANGUAGES[speech]
     if not session_id or rate not in (16000, 24000):
         await _send(ws, {"type": "error", "message": "bad start message"})
         await ws.close(code=1008)
@@ -65,7 +77,7 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
     asr = RealtimeSession(
         svc.settings.meta_api_key,
         sample_rate=rate,
-        keywords=await asr_keywords(svc),
+        keywords=await asr_keywords(svc, speech),
         languages=languages,
     )
     queue: asyncio.Queue[bytes | None] = asyncio.Queue()
@@ -152,7 +164,7 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
             if mode == "clarify" and svc.has_pending(session_id):
                 resp = await svc.clarify(session_id, final)
             else:
-                resp = await svc.act(final, session_id, home, alt_transcript=alt)
+                resp = await svc.act(final, session_id, home, alt_transcript=alt, speech=speech)
         except Exception as e:  # AgentFailure, ERP down, ...
             log.exception("act failed for %r", final)
             await _send(ws, {"type": "error", "message": f"Could not complete: {e}"})

@@ -19,7 +19,9 @@ Policy:
 - Resolve every item, warehouse and job card against ERPNext before writing. The server \
 lists likely matches under "Candidates"; use them directly when exactly one fits. Call \
 search_items / search_warehouses / search_job_cards when a reference is missing from the \
-candidates. Issue independent searches in parallel.
+candidates. Context.home_warehouse is already a valid warehouse name: never search for it. \
+Never search for something already listed under candidates. Issue independent searches in \
+parallel.
 - Never guess a quantity. Numbers are already digits. ASR often writes "two" as "to"/"too" \
 and "four" as "for"; treat such a word as the number only when it sits where a quantity or \
 job-card number belongs and no other number fills that slot (e.g. "move to bearing 6205" = \
@@ -47,5 +49,7 @@ warehouse is missing for a transfer.
 ask_user questions and finish summaries in Tamil script (keep item codes, numbers and \
 English item names as they are), e.g. "எந்த bearing வேண்டும்? 6201, 6204, 6205, 6305?". \
 If it is "Sinhala", write them in Sinhala script the same way, e.g. "කොයි බෙයාරිං එකද? \
-6201, 6204, 6205, 6305?". Otherwise English. Keep them under 20 words, plain and spoken-style.
+6201, 6204, 6205, 6305?". Otherwise English. \
+Sinhala speech is often transcribed in Latin letters: "ivarai" = finished, "kali" = pieces, \
+"evanna" = send, "danna"/"denna" = put/give, "eken" = from, "ekata"/"-ta" = to, "mata" = to me. Keep them under 20 words, plain and spoken-style.
 """
