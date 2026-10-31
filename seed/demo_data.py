@@ -22,6 +22,7 @@ BOT_ROLES = [
     "Manufacturing Manager",
     "Purchase User",
     "Item Manager",
+    "HR User",  # read Employee: the worker PIN map
 ]
 
 # The three floor warehouses. "Stores" is created by the setup wizard.
@@ -170,3 +171,21 @@ WORK_ORDERS = [
     ("ASSY-PUMP", 30, "Line 1"),
     ("ASSY-GBX", 10, "Line 2"),
 ]
+
+# Shop-floor workers (ERPNext Employee). The PIN is only used here: the seed stores its salted
+# hash in Employee.floorvoice_pin. home = home line (default destination / requesting
+# warehouse); language = preferred speech + readback language.
+WORKERS: list[dict[str, str]] = [
+    {"first_name": "Kumar", "last_name": "Selvaraj", "gender": "Male", "pin": "1111",
+     "home": "Line 1", "language": "ta", "aliases": "kumar, குமார்"},
+    {"first_name": "Priya", "last_name": "Nadarajah", "gender": "Female", "pin": "2222",
+     "home": "Line 2", "language": "ta", "aliases": "priya, பிரியா"},
+    {"first_name": "Nimal", "last_name": "Perera", "gender": "Male", "pin": "3333",
+     "home": "Line 1", "language": "si", "aliases": "nimal, නිමල්"},
+    {"first_name": "Dilani", "last_name": "Fernando", "gender": "Female", "pin": "4444",
+     "home": "Line 2", "language": "si", "aliases": "dilani, දිලානි"},
+    {"first_name": "Arjun", "last_name": "Mahendran", "gender": "Male", "pin": "5555",
+     "home": "Stores", "language": "en", "aliases": "arjun"},
+    {"first_name": "Sarah", "last_name": "Thomas", "gender": "Female", "pin": "6666",
+     "home": "Line 1", "language": "en", "aliases": "sarah"},
+]  # fmt: skip

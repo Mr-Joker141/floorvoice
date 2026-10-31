@@ -125,6 +125,9 @@ class ToolContext:
     posted: list[PostedDoc] = field(default_factory=list)
     # Text Muse Spark read on the part label when a photo settled which item was meant.
     photo_label: str = ""
+    # The worker who spoke (Employee name / employee_name), stamped on every document.
+    worker_id: str = ""
+    worker_name: str = ""
 
 
 class MastersCache:
@@ -139,13 +142,14 @@ class MastersCache:
         async with self._lock:
             stale = time.monotonic() - self._loaded > self.ttl
             if self._masters is None or stale or refresh:
-                items, whs, jcs, stock = await asyncio.gather(
+                items, whs, jcs, stock, workers = await asyncio.gather(
                     erp_masters.load_items(self.erp),
                     erp_masters.load_warehouses(self.erp),
                     erp_masters.load_job_cards(self.erp),
                     erp_masters.load_stock(self.erp),
+                    erp_masters.load_workers(self.erp),
                 )
-                self._masters = Masters(items, whs, jcs, stock)
+                self._masters = Masters(items, whs, jcs, stock, workers)
                 self._loaded = time.monotonic()
             return self._masters
 
@@ -223,6 +227,8 @@ class ToolExecutor:
 
     def _remarks(self, ctx: ToolContext) -> str:
         line = f"Posted by FloorVoice from voice: {ctx.transcript}"
+        if ctx.worker_name:
+            line = f"{ctx.worker_name}: {line}"
         if ctx.photo_label:
             line += f' | Item confirmed from label photo: "{ctx.photo_label}"'
         return line[:1000]
@@ -276,6 +282,7 @@ class ToolExecutor:
                 "purpose": purpose,
                 "company": self.company,
                 "remarks": self._remarks(ctx),
+                "floorvoice_worker": ctx.worker_id or None,
                 "items": [row],
             },
             submit=True,
@@ -316,6 +323,8 @@ class ToolExecutor:
             "to_time": now.isoformat(sep=" "),
             "completed_qty": q,
         }
+        if ctx.worker_id:
+            new_log["employee"] = ctx.worker_id
         logs.append(new_log)
         changes: dict[str, Any] = {"time_logs": logs, "remarks": self._remarks(ctx)}
         complete = abs(q - pending) < 1e-9
@@ -365,6 +374,7 @@ class ToolExecutor:
                 "schedule_date": needed_by,
                 "set_warehouse": wh,
                 "floorvoice_remarks": self._remarks(ctx),
+                "floorvoice_worker": ctx.worker_id or None,
                 "items": [
                     {"item_code": item_code, "qty": q, "warehouse": wh, "schedule_date": needed_by}
                 ],

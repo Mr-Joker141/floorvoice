@@ -222,6 +222,7 @@ class Agent:
         home_warehouse: str | None = None,
         alt_transcript: asyncio.Future[str] | None = None,
         speech: str = "",
+        worker: dict[str, Any] | None = None,
     ) -> AgentState:
         text = normalize_numbers(transcript.strip(), sinhala_latin=speech == "si")
         lang = reply_language(text, speech)
@@ -238,6 +239,9 @@ class Agent:
         }
         state = AgentState(transcript=transcript, language=lang, alt_transcript=alt_transcript)
         state.ctx.transcript = transcript
+        if worker:
+            state.ctx.worker_id = str(worker["name"])
+            state.ctx.worker_name = str(worker.get("employee_name") or worker["name"])
         state.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
             {
@@ -260,9 +264,14 @@ class Agent:
         home_warehouse: str | None = None,
         alt_transcript: asyncio.Future[str] | None = None,
         speech: str = "",
+        worker: dict[str, Any] | None = None,
     ) -> tuple[AgentState, AgentResult]:
         state = await self.start(
-            transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript, speech=speech
+            transcript,
+            home_warehouse=home_warehouse,
+            alt_transcript=alt_transcript,
+            speech=speech,
+            worker=worker,
         )
         return state, await self.run(state)
 

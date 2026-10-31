@@ -12,10 +12,12 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 import sys
 from typing import Any
 
 from erp.client import ErpClient, ErpError
+from erp.masters import hash_pin
 from seed import demo_data as d
 from server.config import ROOT
 
@@ -90,6 +92,100 @@ async def custom_fields(erp: ErpClient) -> None:
             "read_only": 1,
         },
     )
+
+
+# Employee fields for FloorVoice workers, and the worker link on the documents it posts.
+WORKER_FIELDS: list[dict[str, Any]] = [
+    {"dt": "Employee", "fieldname": "floorvoice_pin", "label": "FloorVoice PIN (hash)",
+     "fieldtype": "Data", "insert_after": "employee_name", "read_only": 1, "hidden": 1},
+    {"dt": "Employee", "fieldname": "floorvoice_home_warehouse", "label": "FloorVoice Home Line",
+     "fieldtype": "Link", "options": "Warehouse", "insert_after": "employee_name"},
+    {"dt": "Employee", "fieldname": "floorvoice_language", "label": "FloorVoice Language",
+     "fieldtype": "Select", "options": "ta\nsi\nen", "insert_after": "floorvoice_home_warehouse"},
+    {"dt": "Employee", "fieldname": "voice_aliases", "label": "Voice Aliases",
+     "fieldtype": "Small Text", "insert_after": "floorvoice_language"},
+    {"dt": "Stock Entry", "fieldname": "floorvoice_worker", "label": "FloorVoice Worker",
+     "fieldtype": "Link", "options": "Employee", "insert_after": "stock_entry_type",
+     "read_only": 1},
+    {"dt": "Material Request", "fieldname": "floorvoice_worker", "label": "FloorVoice Worker",
+     "fieldtype": "Link", "options": "Employee", "insert_after": "material_request_type",
+     "read_only": 1},
+]  # fmt: skip
+
+
+async def worker_fields(erp: ErpClient) -> None:
+    for f in WORKER_FIELDS:
+        await ensure(erp, "Custom Field", f"{f['dt']}-{f['fieldname']}", f)
+
+
+def pin_salt() -> str:
+    """FLOORVOICE_PIN_SALT from .env, generated and saved on first run."""
+    salt = os.environ.get("FLOORVOICE_PIN_SALT", "")
+    if not salt:
+        salt = secrets.token_hex(16)
+        write_env({"FLOORVOICE_PIN_SALT": salt})
+        os.environ["FLOORVOICE_PIN_SALT"] = salt
+        log.info("generated FLOORVOICE_PIN_SALT in .env")
+    return salt
+
+
+class PinCollision(ValueError):
+    pass
+
+
+def check_pins(workers: list[dict[str, str]]) -> None:
+    """Every PIN must be 4 digits and unique; a collision is a seed error."""
+    seen: dict[str, str] = {}
+    for w in workers:
+        pin, who = w["pin"], f"{w['first_name']} {w['last_name']}"
+        if not (len(pin) == 4 and pin.isdigit()):
+            raise PinCollision(f"{who}: PIN must be 4 digits")
+        if pin in seen:
+            raise PinCollision(f"{who} and {seen[pin]} have the same PIN")
+        seen[pin] = who
+
+
+async def workers(erp: ErpClient, salt: str) -> None:
+    check_pins(d.WORKERS)
+    existing = await erp.get_list(
+        "Employee", fields=["name", "employee_name", "floorvoice_pin"],
+        filters=[["company", "=", d.COMPANY]], limit=1000,
+    )  # fmt: skip
+    by_name = {e["employee_name"]: e for e in existing}
+    for w in d.WORKERS:
+        full = f"{w['first_name']} {w['last_name']}"
+        pin_hash = hash_pin(w["pin"], salt)
+        clash = [e for e in existing
+                 if e.get("floorvoice_pin") == pin_hash and e["employee_name"] != full]  # fmt: skip
+        if clash:
+            raise PinCollision(f"{full}'s PIN is already used by {clash[0]['employee_name']}")
+        fields = {
+            "floorvoice_pin": pin_hash,
+            "floorvoice_home_warehouse": wh(w["home"]),
+            "floorvoice_language": w["language"],
+            "voice_aliases": w["aliases"],
+        }
+        if full in by_name:
+            await erp.update("Employee", by_name[full]["name"], fields)
+            continue
+        doc = await erp.insert("Employee", {
+            "first_name": w["first_name"], "last_name": w["last_name"], "gender": w["gender"],
+            "date_of_birth": "1990-01-01", "date_of_joining": "2024-01-15", "status": "Active",
+            "company": d.COMPANY, **fields,
+        })  # fmt: skip
+        log.info("created Employee %s %s", doc["name"], full)
+
+
+async def bot_roles(erp: ErpClient) -> None:
+    """Give an existing bot user any role added to BOT_ROLES since it was created."""
+    if not await erp.exists("User", d.BOT_USER):
+        return
+    user = await erp.get_doc("User", d.BOT_USER)
+    have = {r["role"] for r in user.get("roles") or []}
+    if missing := [r for r in d.BOT_ROLES if r not in have]:
+        roles = [{"role": r} for r in sorted(have | set(missing))]
+        await erp.update("User", d.BOT_USER, {"roles": roles})
+        log.info("bot user: added roles %s", ", ".join(missing))
 
 
 async def warehouses(erp: ErpClient) -> None:
@@ -290,6 +386,9 @@ async def main() -> int:
         await suppliers(erp)
         await manufacturing(erp)
         await work_orders(erp)
+        await worker_fields(erp)
+        await workers(erp, pin_salt())
+        await bot_roles(erp)
         if "--keep-keys" not in sys.argv or not os.environ.get("ERP_API_KEY"):
             key, secret = await bot_user(erp)
             write_env({"ERP_API_KEY": key, "ERP_API_SECRET": secret})

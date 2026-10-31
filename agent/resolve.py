@@ -89,6 +89,11 @@ class Masters:
     job_cards: list[dict[str, Any]] = field(default_factory=list)
     # item_code -> {warehouse name: qty}
     stock: dict[str, dict[str, float]] = field(default_factory=dict)
+    # Employees with a FloorVoice PIN (floorvoice_pin holds the salted hash).
+    workers: list[dict[str, Any]] = field(default_factory=list)
+
+    def worker(self, pin_hash: str) -> dict[str, Any] | None:
+        return next((w for w in self.workers if w.get("floorvoice_pin") == pin_hash), None)
 
     def item(self, code: str) -> dict[str, Any] | None:
         return next((i for i in self.items if i["item_code"] == code), None)

@@ -12,18 +12,42 @@
 <body>
   <header class="bar">
     <div class="brand"><span class="dot"></span>FloorVoice</div>
-    <label class="home" title="The language you speak">
-      <select id="speech" aria-label="Speech language">
+    <button id="worker-btn" class="worker-btn" type="button" aria-expanded="false"
+            aria-controls="settings">…</button>
+  </header>
+
+  <section id="settings" class="settings" hidden>
+    <p class="settings-who"><span id="settings-name"></span><span id="settings-line" class="muted"></span></p>
+    <label class="settings-row" for="lang-override">
+      <span>Language</span>
+      <select id="lang-override">
+        <option value="">Worker default</option>
         <option value="ta">தமிழ்</option>
         <option value="si">සිංහල</option>
         <option value="en">English</option>
       </select>
     </label>
-    <label class="home" title="Your warehouse (used for requests)">
-      <span>My line</span>
-      <select id="home"></select>
-    </label>
-  </header>
+    <button id="switch-worker" class="switch-worker" type="button">Switch worker</button>
+  </section>
+
+  <div id="pin-screen" class="pin-screen" hidden>
+    <div class="pin-box">
+      <p class="pin-title">Enter your PIN</p>
+      <p class="pin-sub"><span lang="ta">உங்கள் PIN</span> · <span lang="si">ඔබේ PIN</span></p>
+      <div id="pin-dots" class="pin-dots" aria-live="polite"><i></i><i></i><i></i><i></i></div>
+      <p id="pin-msg" class="pin-msg" role="alert"></p>
+      <div id="pin-pad" class="pin-pad">
+        <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button>
+        <button type="button" data-k="3">3</button><button type="button" data-k="4">4</button>
+        <button type="button" data-k="5">5</button><button type="button" data-k="6">6</button>
+        <button type="button" data-k="7">7</button><button type="button" data-k="8">8</button>
+        <button type="button" data-k="9">9</button>
+        <button type="button" data-k="clear" aria-label="Clear">C</button>
+        <button type="button" data-k="0">0</button>
+        <button type="button" data-k="back" aria-label="Delete">⌫</button>
+      </div>
+    </div>
+  </div>
 
   <main>
     <section class="stage" aria-live="polite">

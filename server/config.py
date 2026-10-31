@@ -29,6 +29,7 @@ class Settings:
     erp_timezone: str
     agent_reasoning: str
     access_key: str
+    pin_salt: str  # per-site salt for worker PIN hashes (seed writes one to .env)
 
 
 def get_settings() -> Settings:
@@ -43,4 +44,5 @@ def get_settings() -> Settings:
         erp_timezone=os.environ.get("ERP_TIMEZONE", "Asia/Colombo"),
         agent_reasoning=os.environ.get("AGENT_REASONING", "low"),
         access_key=os.environ.get("FLOORVOICE_KEY", ""),
+        pin_salt=os.environ.get("FLOORVOICE_PIN_SALT", ""),
     )

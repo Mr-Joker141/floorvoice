@@ -3,7 +3,9 @@
 Cancels every submitted Stock Entry (except the seeded opening stock) and Material Request
 (ERPNext v15 keeps cancelled stock entries: their ledger rows still link to them), deletes
 all Job Cards and Work Orders and resets their naming counters, re-runs the seed (5 work
-orders -> job cards PO-JOB00001..5) and archives the FloorVoice history. Masters are kept.
+orders -> job cards PO-JOB00001..5; the 6 demo workers get their PINs, home lines and
+languages back) and archives the FloorVoice history, which clears every worker's history.
+Masters are kept.
 
 Only for the dedicated demo site. Usage:
     uv run python -m scripts.demo_reset          # shows what will go, asks to confirm
@@ -97,7 +99,7 @@ def main() -> int:
     hist = s.data_dir / "history.jsonl"
     if hist.exists():
         hist.rename(hist.with_name(f"history-{time.strftime('%Y%m%d-%H%M%S')}.jsonl"))
-        print("history archived")
+        print("history archived (all workers)")
     print("done — restart the server so it reloads job cards (or wait 60 s)")
     return 0
 

@@ -1,4 +1,4 @@
-// FloorVoice PWA: hold-to-talk -> WS /audio -> transcript + agent result -> spoken readback.
+// FloorVoice PWA: PIN -> hold-to-talk -> WS /audio -> transcript + agent result -> readback.
 
 const TARGET_RATE = 24000;
 const MIN_HOLD_MS = 300;
@@ -9,10 +9,13 @@ const el = {
   card: $("card"), cardStatus: $("card-status"), cardLinks: $("card-links"), cardText: $("card-text"), cardMeta: $("card-meta"), options: $("options"),
   photoRow: $("photo-row"), photoBtn: $("photo-btn"), photoLabel: $("photo-label"),
   photoThumb: $("photo-thumb"), photoInput: $("photo-input"),
-  history: $("history"), home: $("home"), speech: $("speech"), typed: $("typed"), typedInput: $("typed-input"),
+  history: $("history"), typed: $("typed"), typedInput: $("typed-input"),
+  workerBtn: $("worker-btn"), settings: $("settings"), settingsName: $("settings-name"),
+  settingsLine: $("settings-line"), langOverride: $("lang-override"), switchWorker: $("switch-worker"),
+  pinScreen: $("pin-screen"), pinDots: $("pin-dots"), pinMsg: $("pin-msg"), pinPad: $("pin-pad"),
 };
 
-// ---- settings: access key (?k=...) and home warehouse, remembered per device ----------
+// ---- settings: access key (?k=...), worker PIN and language override, per device -------
 
 function store(key, value) {
   try {
@@ -22,6 +25,10 @@ function store(key, value) {
   return value;
 }
 
+function forget(key) {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
 const params = new URLSearchParams(location.search);
 if (params.get("k")) {
   store("fv.key", params.get("k"));
@@ -29,35 +36,116 @@ if (params.get("k")) {
 }
 const accessKey = params.get("k") || store("fv.key") || "";
 
-async function api(path, body) {
-  const res = await fetch(path, {
-    method: body ? "POST" : "GET",
-    headers: { "Content-Type": "application/json", "X-FloorVoice-Key": accessKey },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
-  return res.json();
+const PIN_UNKNOWN = "PIN not recognised";
+let pin = store("fv.pin") || "";
+let worker = null; // {id, name, home_warehouse, language} from /me
+
+// The phone-level "My line" and speech language were replaced by the worker's home line and
+// preferred language; the language select is now an optional override.
+forget("fv.home");
+forget("fv.speech");
+el.langOverride.value = store("fv.lang") || "";
+el.langOverride.addEventListener("change", () => store("fv.lang", el.langOverride.value));
+
+function headers(json = true) {
+  const h = { "X-FloorVoice-Key": accessKey, "X-FloorVoice-Pin": pin };
+  if (json) h["Content-Type"] = "application/json";
+  return h;
 }
 
-async function loadWarehouses() {
+async function checked(res) {
+  if (res.ok) return res.json();
+  const detail = (await res.json().catch(() => ({}))).detail || res.statusText;
+  if (res.status === 403 && detail === PIN_UNKNOWN) askPin(PIN_UNKNOWN);
+  throw new Error(detail);
+}
+
+async function api(path, body) {
+  return checked(await fetch(path, {
+    method: body ? "POST" : "GET",
+    headers: headers(),
+    body: body ? JSON.stringify(body) : undefined,
+  }));
+}
+
+// ---- worker: PIN screen, settings panel ---------------------------------------------------
+
+let entered = "";
+
+function askPin(message = "") {
+  worker = null;
+  pin = "";
+  forget("fv.pin");
+  entered = "";
+  drawPin();
+  el.pinMsg.textContent = message;
+  el.pinScreen.hidden = false;
+  el.settings.hidden = true;
+  el.workerBtn.textContent = "…";
+}
+
+function drawPin() {
+  [...el.pinDots.children].forEach((d, i) => d.classList.toggle("on", i < entered.length));
+}
+
+async function submitPin() {
+  pin = entered;
   try {
-    const list = await api("/warehouses");
-    const saved = store("fv.home");
-    el.home.innerHTML = "";
-    for (const w of list) {
-      const opt = new Option(w.label, w.name);
-      el.home.add(opt);
-    }
-    const fallback = list.find((w) => /line/i.test(w.label)) || list[0];
-    el.home.value = list.some((w) => w.name === saved) ? saved : fallback?.name;
+    worker = await checked(await fetch("/me", { headers: headers(false) }));
   } catch (e) {
-    showCard("error", e.message === "Missing or wrong access key"
+    if (e.message !== PIN_UNKNOWN) askPin(e.message === "Missing or wrong access key"
+      ? "This link needs an access key. Open the full link with ?k=…" : e.message);
+    el.pinDots.classList.remove("bad");
+    void el.pinDots.offsetWidth; // restart the shake
+    el.pinDots.classList.add("bad");
+    navigator.vibrate?.([80, 60, 80]);
+    return;
+  }
+  store("fv.pin", pin);
+  el.pinScreen.hidden = true;
+  showWorker();
+  sessionId = newId();
+  awaitingAnswer = false;
+  clearCard();
+  refreshHistory();
+}
+
+function showWorker() {
+  const line = (worker.home_warehouse || "").replace(/ - [^-]+$/, "");
+  el.workerBtn.textContent = worker.name;
+  el.settingsName.textContent = worker.name;
+  el.settingsLine.textContent = line ? `Home line: ${line}` : "";
+}
+
+el.pinPad.addEventListener("click", (e) => {
+  const k = e.target.closest("button")?.dataset.k;
+  if (!k) return;
+  if (k === "back") entered = entered.slice(0, -1);
+  else if (k === "clear") entered = "";
+  else if (entered.length < 4) entered += k;
+  el.pinMsg.textContent = "";
+  drawPin();
+  if (entered.length === 4) submitPin();
+});
+
+el.workerBtn.addEventListener("click", () => {
+  if (!worker) return;
+  el.settings.hidden = !el.settings.hidden;
+  el.workerBtn.setAttribute("aria-expanded", String(!el.settings.hidden));
+});
+el.switchWorker.addEventListener("click", () => askPin());
+
+async function startup() {
+  if (!pin) return askPin();
+  try {
+    worker = await checked(await fetch("/me", { headers: headers(false) }));
+    showWorker();
+    refreshHistory();
+  } catch (e) {
+    if (e.message !== PIN_UNKNOWN) showCard("error", e.message === "Missing or wrong access key"
       ? "This link needs an access key. Open the full link with ?k=…" : `Server: ${e.message}`);
   }
 }
-el.home.addEventListener("change", () => store("fv.home", el.home.value));
-el.speech.value = store("fv.speech") || "ta";
-el.speech.addEventListener("change", () => store("fv.speech", el.speech.value));
 
 // ---- UI state ---------------------------------------------------------------------------
 
@@ -272,7 +360,7 @@ function wsUrl() {
 }
 
 async function pressStart() {
-  if (busy || current) return;
+  if (busy || current || !worker) return;
   unlockSpeech();
   speechSynthesis?.cancel();
   try {
@@ -296,8 +384,8 @@ async function pressStart() {
       session_id: sessionId,
       mode: awaitingAnswer ? "clarify" : "act",
       sample_rate: TARGET_RATE,
-      home_warehouse: el.home.value || null,
-      speech: el.speech.value,
+      pin,
+      speech: el.langOverride.value,
     }));
     for (const b of utt.buffered) utt.ws.send(b);
     utt.buffered = [];
@@ -348,6 +436,12 @@ function pressEnd() {
 }
 
 function onServerMessage(utt, msg) {
+  if (msg.type === "error" && msg.code === "pin") {
+    finish(utt);
+    setButton("idle");
+    askPin(msg.message);
+    return;
+  }
   if (msg.type === "partial") showTranscript(msg.text, false);
   else if (msg.type === "final") showTranscript(msg.text, true);
   else if (msg.type === "result") {
@@ -394,7 +488,7 @@ document.addEventListener("keyup", (e) => {
 // ---- typed fallback and option taps --------------------------------------------------------
 
 async function answerTyped(text, via = "voice") {
-  if (busy || !text.trim()) return;
+  if (busy || !text.trim() || !worker) return;
   unlockSpeech();
   busy = true;
   setButton("busy");
@@ -403,7 +497,7 @@ async function answerTyped(text, via = "voice") {
     const r = awaitingAnswer
       ? await api("/clarify", { session_id: sessionId, answer: text, via })
       : await api("/act", { session_id: sessionId, transcript: text,
-                            home_warehouse: el.home.value || null, speech: el.speech.value });
+                            speech: el.langOverride.value });
     busy = false;
     handleResult(r);
   } catch (e) {
@@ -463,12 +557,11 @@ el.photoInput.addEventListener("change", async () => {
     const form = new FormData();
     form.append("session_id", sessionId);
     form.append("image", jpeg, "part.jpg");
-    const res = await fetch("/clarify-photo", {
-      method: "POST", headers: { "X-FloorVoice-Key": accessKey }, body: form,
-    });
-    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    const r = await checked(await fetch("/clarify-photo", {
+      method: "POST", headers: headers(false), body: form,
+    }));
     busy = false;
-    handleResult(await res.json());
+    handleResult(r);
   } catch (e) {
     busy = false;
     el.photoBtn.disabled = false;
@@ -483,6 +576,7 @@ el.photoInput.addEventListener("change", async () => {
 // ---- history ---------------------------------------------------------------------------
 
 async function refreshHistory() {
+  if (!worker) return;
   try {
     const rows = await api("/history?limit=15");
     el.history.innerHTML = "";
@@ -504,6 +598,5 @@ async function refreshHistory() {
 if (!window.isSecureContext) {
   showCard("error", "Microphone needs HTTPS. Open the tunnel (https://) link.");
 }
-loadWarehouses();
-refreshHistory();
+startup();
 setButton("idle");

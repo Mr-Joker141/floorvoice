@@ -2,13 +2,14 @@
 
 Client protocol (one utterance per connection):
   -> {"type": "start", "session_id": str, "mode": "act"|"clarify", "sample_rate": 24000,
-      "home_warehouse": str|null, "speech": "ta"|"si"|"en"}
+      "pin": "1234", "speech": "ta"|"si"|"en"|""}   (speech: override; "" = worker's)
   -> binary frames: s16le mono PCM at sample_rate
   -> {"type": "stop"}            (or {"type": "cancel"} to drop the utterance)
   <- {"type": "partial", "text": str}         while speaking
   <- {"type": "final", "text": str}           after stop
   <- {"type": "result", ...ActResponse}       agent outcome
-  <- {"type": "error", "message": str}
+  <- {"type": "error", "message": str, "code"?: "pin"}
+The PIN is resolved to a worker once per press; an unknown PIN gets code "pin" and close 4403.
 """
 
 from __future__ import annotations
@@ -64,15 +65,23 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
     session_id = str(start.get("session_id") or "")[:64]
     mode = start.get("mode", "act")
     rate = int(start.get("sample_rate", 24000))
-    home = start.get("home_warehouse")
-    speech = str(start.get("speech") or "ta")
-    if speech not in SPEECH_LANGUAGES:
-        speech = "ta"
-    languages = SPEECH_LANGUAGES[speech]
     if not session_id or rate not in (16000, 24000):
         await _send(ws, {"type": "error", "message": "bad start message"})
         await ws.close(code=1008)
         return
+    from server.app import PIN_UNKNOWN, NotYours, UnknownWorker
+
+    try:
+        worker = await svc.worker(str(start.get("pin") or ""))
+    except UnknownWorker:
+        await _send(ws, {"type": "error", "message": PIN_UNKNOWN, "code": "pin"})
+        await ws.close(code=4403)
+        return
+    override = str(start.get("speech") or "")
+    speech = override or str(worker.get("floorvoice_language") or "ta")
+    if speech not in SPEECH_LANGUAGES:
+        speech = "ta"
+    languages = SPEECH_LANGUAGES[speech]
 
     asr = RealtimeSession(
         svc.settings.meta_api_key,
@@ -162,10 +171,14 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
         audio_path = _save_wav(svc, session_id, bytes(pcm), rate)
         try:
             if mode == "clarify" and svc.has_pending(session_id):
-                resp = await svc.clarify(session_id, final)
+                resp = await svc.clarify(session_id, final, worker=worker)
             else:
-                resp = await svc.act(final, session_id, home, alt_transcript=alt, speech=speech,
-                                     audio=audio_path.name if audio_path else "")  # fmt: skip
+                resp = await svc.act(final, session_id, alt_transcript=alt, speech=speech,
+                                     audio=audio_path.name if audio_path else "",
+                                     worker=worker)  # fmt: skip
+        except NotYours as e:
+            await _send(ws, {"type": "error", "message": str(e)})
+            return
         except Exception as e:  # AgentFailure, ERP down, ...
             log.exception("act failed for %r", final)
             await _send(ws, {"type": "error", "message": f"Could not complete: {e}"})

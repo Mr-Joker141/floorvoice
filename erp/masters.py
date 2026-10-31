@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 from typing import Any
 
 from erp.client import ErpClient
@@ -38,6 +40,28 @@ async def load_job_cards(erp: ErpClient) -> list[dict[str, Any]]:
         filters=[["docstatus", "in", [0, 1]], ["status", "!=", "Cancelled"]],
         order_by="name asc",
         limit=500,
+    )  # fmt: skip
+
+
+def hash_pin(pin: str, salt: str) -> str:
+    """Stored form of a worker PIN: HMAC-SHA256 keyed with the per-site salt.
+
+    Deterministic so the server can look a PIN up; with 10,000 possible PINs the salt is
+    what keeps the stored hashes from being reversed by anyone who can read Employee.
+    """
+    if not salt:
+        raise ValueError("FLOORVOICE_PIN_SALT is not set")
+    return hmac.new(salt.encode(), pin.strip().encode(), hashlib.sha256).hexdigest()
+
+
+async def load_workers(erp: ErpClient) -> list[dict[str, Any]]:
+    """Active employees that have a FloorVoice PIN."""
+    return await erp.get_list(
+        "Employee",
+        fields=["name", "employee_name", "floorvoice_pin", "floorvoice_home_warehouse",
+                "floorvoice_language", "voice_aliases"],
+        filters=[["status", "=", "Active"], ["floorvoice_pin", "is", "set"]],
+        limit=1000,
     )  # fmt: skip
 
 

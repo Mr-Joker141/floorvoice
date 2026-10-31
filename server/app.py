@@ -1,4 +1,4 @@
-"""FloorVoice API: WS /audio, POST /act, /clarify, /clarify-photo, /undo, GET /history, PWA."""
+"""FloorVoice API: WS /audio, POST /act /clarify /clarify-photo /undo, GET /me /history, PWA."""
 
 from __future__ import annotations
 
@@ -26,6 +26,7 @@ from agent.runtime import Runtime, build_runtime
 from agent.tools import PostedDoc, ToolError
 from agent.vision import identify
 from erp.client import ErpError
+from erp.masters import hash_pin
 from server.config import ROOT, Settings, get_settings
 
 log = logging.getLogger("floorvoice")
@@ -35,13 +36,14 @@ PHOTO_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
 MAX_PHOTO_BYTES = 8_000_000
 PENDING_TTL = 300.0
 KEY_HEADER = "X-FloorVoice-Key"
+PIN_HEADER = "X-FloorVoice-Pin"
+PIN_UNKNOWN = "PIN not recognised"
 
 
 class ActRequest(BaseModel):
     transcript: str
     session_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
-    home_warehouse: str | None = None
-    speech: str = ""  # worker's chosen language: ta | si | en
+    speech: str = ""  # manual language override (ta | si | en); default: the worker's
 
 
 class ClarifyRequest(BaseModel):
@@ -78,6 +80,8 @@ class HistoryEntry:
     resolved_by: str = "auto"
     audio: str = ""  # WAV of the press in data/audio/
     photos: list[str] = field(default_factory=list)  # label photos, next to the WAV
+    worker_id: str = ""  # Employee who spoke
+    worker_name: str = ""
 
 
 @dataclass
@@ -132,6 +136,14 @@ class AgentFailure(RuntimeError):
     pass
 
 
+class UnknownWorker(LookupError):
+    pass
+
+
+class NotYours(PermissionError):
+    """Another worker's question or document."""
+
+
 def _repeat_prompt(transcript: str, speech: str = "") -> str:
     lang = reply_language(transcript, speech)
     if lang == "ta":
@@ -182,6 +194,22 @@ class Service:
     def has_pending(self, session_id: str) -> bool:
         return session_id in self.store.pending
 
+    async def worker(self, pin: str | None) -> dict[str, Any]:
+        """Employee for a PIN, from the masters cache (60 s). UnknownWorker if none."""
+        pin = (pin or "").strip()
+        if not (pin.isdigit() and len(pin) == 4 and self.settings.pin_salt):
+            raise UnknownWorker(PIN_UNKNOWN)
+        found = (await self.rt.cache.get()).worker(hash_pin(pin, self.settings.pin_salt))
+        if found is None:
+            raise UnknownWorker(PIN_UNKNOWN)
+        return found
+
+    def _owned_pending(self, session_id: str, worker: dict[str, Any] | None) -> Pending | None:
+        pending = self.store.pending.get(session_id)
+        if pending and worker and pending.entry.worker_id not in ("", worker["name"]):
+            raise NotYours("This question belongs to another worker")
+        return pending
+
     def _respond(
         self,
         session_id: str,
@@ -224,8 +252,14 @@ class Service:
         alt_transcript: asyncio.Future[str] | None = None,
         speech: str = "",
         audio: str = "",
+        worker: dict[str, Any] | None = None,
     ) -> ActResponse:
+        """speech: manual language override; otherwise the worker's preferred language.
+        The worker's home line is the default destination / requesting warehouse."""
         t0 = time.monotonic()
+        if worker:
+            home_warehouse = worker.get("floorvoice_home_warehouse") or home_warehouse
+            speech = speech or worker.get("floorvoice_language") or ""
         transcript = transcript.strip()
         if token_count(transcript) < MIN_TOKENS:
             text = _repeat_prompt(transcript, speech)
@@ -239,6 +273,8 @@ class Service:
             kind="",
             text="",
             audio=audio,
+            worker_id=str(worker["name"]) if worker else "",
+            worker_name=str(worker.get("employee_name") or worker["name"]) if worker else "",
         )
         try:
             state, result = await self.rt.agent.act(
@@ -246,6 +282,7 @@ class Service:
                 home_warehouse=home_warehouse,
                 alt_transcript=alt_transcript,
                 speech=speech,
+                worker=worker,
             )
         except Exception as e:
             log.exception("agent failed for %r", transcript)
@@ -253,12 +290,19 @@ class Service:
         return self._respond(session_id, result, entry, t0, state, transcript)
 
     async def clarify(
-        self, session_id: str, answer: str, *, via: str = "voice", photo_label: str = ""
+        self,
+        session_id: str,
+        answer: str,
+        *,
+        via: str = "voice",
+        photo_label: str = "",
+        worker: dict[str, Any] | None = None,
     ) -> ActResponse:
         """Resume the open question with the worker's answer (spoken, tapped or from a
         label photo, which arrives here as the chip it picked)."""
         t0 = time.monotonic()
         answer = answer.strip()
+        self._owned_pending(session_id, worker)
         if not answer:
             pending = self.store.pending.get(session_id)
             text = _repeat_prompt(answer, pending.state.language if pending else "")
@@ -279,10 +323,12 @@ class Service:
             raise AgentFailure(str(e)) from e
         return self._respond(session_id, result, pending.entry, t0, pending.state, answer)
 
-    async def clarify_photo(self, session_id: str, image: bytes, mime: str) -> ActResponse:
+    async def clarify_photo(
+        self, session_id: str, image: bytes, mime: str, worker: dict[str, Any] | None = None
+    ) -> ActResponse:
         """Answer an open item question from a photo of the part or its label."""
         t0 = time.monotonic()
-        pending = self.store.pending.get(session_id)
+        pending = self._owned_pending(session_id, worker)
         if pending is None:
             raise KeyError(session_id)
         if not pending.state.photo_items:
@@ -294,7 +340,7 @@ class Service:
         option = next((i["option"] for i in items if i["item_code"] == match.item_code), None)
         if match.usable and option is not None:
             return await self.clarify(session_id, option, via="photo",
-                                      photo_label=match.label_text)  # fmt: skip
+                                      photo_label=match.label_text, worker=worker)  # fmt: skip
         # Low confidence, no match or over budget: back to the same question and chips.
         lang = pending.state.language
         text = _unreadable(lang)
@@ -354,29 +400,51 @@ def require_key(request: Request) -> None:
         raise HTTPException(401, "Missing or wrong access key")
 
 
-@app.post("/act", response_model=ActResponse, dependencies=[Depends(require_key)])
-async def act(req: ActRequest) -> ActResponse:
+async def current_worker(request: Request) -> dict[str, Any]:
+    """The worker behind this call (X-FloorVoice-Pin), in addition to the access key."""
     try:
-        return await service().act(
-            req.transcript, req.session_id, req.home_warehouse, speech=req.speech
-        )
+        return await service().worker(request.headers.get(PIN_HEADER))
+    except UnknownWorker as e:
+        raise HTTPException(403, PIN_UNKNOWN) from e
+
+
+Worker = Annotated[dict[str, Any], Depends(current_worker)]
+
+
+def worker_view(w: dict[str, Any]) -> dict[str, str]:
+    return {"id": w["name"], "name": w.get("employee_name") or w["name"],
+            "home_warehouse": w.get("floorvoice_home_warehouse") or "",
+            "language": w.get("floorvoice_language") or ""}  # fmt: skip
+
+
+@app.get("/me", dependencies=[Depends(require_key)])
+async def me(worker: Worker) -> dict[str, str]:
+    return worker_view(worker)
+
+
+@app.post("/act", response_model=ActResponse, dependencies=[Depends(require_key)])
+async def act(req: ActRequest, worker: Worker) -> ActResponse:
+    try:
+        return await service().act(req.transcript, req.session_id, speech=req.speech, worker=worker)
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
 
 
 @app.post("/clarify", response_model=ActResponse, dependencies=[Depends(require_key)])
-async def clarify(req: ClarifyRequest) -> ActResponse:
+async def clarify(req: ClarifyRequest, worker: Worker) -> ActResponse:
     try:
-        return await service().clarify(req.session_id, req.answer, via=req.via)
+        return await service().clarify(req.session_id, req.answer, via=req.via, worker=worker)
     except KeyError as e:
         raise HTTPException(404, "No open question for this session") from e
+    except NotYours as e:
+        raise HTTPException(403, str(e)) from e
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
 
 
 @app.post("/clarify-photo", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def clarify_photo(
-    session_id: Annotated[str, Form()], image: Annotated[UploadFile, File()]
+    session_id: Annotated[str, Form()], image: Annotated[UploadFile, File()], worker: Worker
 ) -> ActResponse:
     mime = (image.content_type or "").split(";")[0]
     if mime not in PHOTO_TYPES:
@@ -385,9 +453,11 @@ async def clarify_photo(
     if not data or len(data) > MAX_PHOTO_BYTES:
         raise HTTPException(413, "Photo is empty or too large")
     try:
-        return await service().clarify_photo(session_id, data, mime)
+        return await service().clarify_photo(session_id, data, mime, worker)
     except KeyError as e:
         raise HTTPException(404, "No open question for this session") from e
+    except NotYours as e:
+        raise HTTPException(403, str(e)) from e
     except ValueError as e:
         raise HTTPException(409, str(e)) from e
     except AgentFailure as e:
@@ -412,13 +482,17 @@ def _undo_text(lang: str, doc: dict[str, str], holder: str) -> str:
 
 
 @app.post("/undo", dependencies=[Depends(require_key)])
-async def undo(req: UndoRequest) -> dict[str, Any]:
-    """Reverse a document FloorVoice posted (only those in its own history)."""
+async def undo(req: UndoRequest, worker: Worker) -> dict[str, Any]:
+    """Reverse a document FloorVoice posted (only those in its own history), once, and only
+    by the worker who posted it."""
     svc = service()
     found = svc.store.find_doc(req.doctype, req.name)
     if found is None:
         raise HTTPException(404, "FloorVoice did not post that document")
     entry, doc = found
+    if entry.worker_id != worker["name"]:
+        who = entry.worker_name or "another worker"
+        raise HTTPException(403, f"Only {who} can undo {req.name}")
     if doc.get("undone"):
         raise HTTPException(409, f"{req.name} was already undone")
     posted = PostedDoc(
@@ -441,20 +515,14 @@ async def undo(req: UndoRequest) -> dict[str, Any]:
 
 
 @app.get("/history", dependencies=[Depends(require_key)])
-async def history(limit: int = 50) -> list[dict[str, Any]]:
-    rows = [asdict(h) for h in reversed(service().store.history[-limit:])]
+async def history(worker: Worker, limit: int = 50, all: int = 0) -> list[dict[str, Any]]:
+    """The current worker's rows; ?all=1 for everyone's (supervisor view)."""
+    rows = [asdict(h) for h in reversed(service().store.history)
+            if all or h.worker_id == worker["name"]][:limit]  # fmt: skip
     for row in rows:  # links follow the current tunnel URL, not the one stored at posting
         for doc in row["documents"]:
             doc["url"] = erp_link(doc["doctype"], doc["name"])
     return rows
-
-
-@app.get("/warehouses", dependencies=[Depends(require_key)])
-async def warehouses() -> list[dict[str, str]]:
-    m = await service().rt.cache.get()
-    # Only floor warehouses (those given spoken aliases), not ERPNext's built-in ones.
-    floor = [w for w in m.warehouses if (w.get("voice_aliases") or "").strip()]
-    return [{"name": w["name"], "label": w["warehouse_name"]} for w in floor or m.warehouses]
 
 
 @app.get("/healthz")

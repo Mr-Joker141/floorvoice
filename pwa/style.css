@@ -15,6 +15,9 @@
 
 * { box-sizing: border-box; }
 
+/* Components set display: grid/flex; keep the hidden attribute authoritative. */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -53,22 +56,6 @@ body {
   background: var(--accent);
 }
 
-.home {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.home select {
-  background: var(--panel);
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 6px 8px;
-  font-size: 14px;
-}
 
 main {
   flex: 1;
@@ -321,3 +308,107 @@ main {
 }
 
 .photo-thumb.reading { animation: spin-fade 1s ease-in-out infinite alternate; }
+
+.worker-btn {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 14px;
+  font-weight: 600;
+  max-width: 60vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.settings {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+}
+
+.settings-who { margin: 0; display: grid; gap: 2px; font-weight: 600; }
+.settings-who .muted { color: var(--muted); font-weight: 400; font-size: 13px; }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.settings-row select {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 15px;
+}
+
+.switch-worker {
+  justify-self: start;
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 10px 16px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pin-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  background: var(--bg);
+  padding: calc(env(safe-area-inset-top) + 16px) 16px calc(env(safe-area-inset-bottom) + 16px);
+}
+
+.pin-box { width: min(340px, 100%); display: grid; gap: 14px; justify-items: center; }
+.pin-title { margin: 0; font-size: 24px; font-weight: 700; }
+.pin-sub { margin: 0; color: var(--muted); font-size: 14px; }
+.pin-dots { display: flex; gap: 18px; margin: 8px 0; }
+
+.pin-dots i {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid var(--muted);
+}
+
+.pin-dots i.on { background: var(--accent); border-color: var(--accent); }
+.pin-dots.bad { animation: shake 0.3s; }
+.pin-msg { margin: 0; min-height: 1.4em; color: var(--err); font-weight: 600; }
+
+.pin-pad {
+  width: 100%;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+
+.pin-pad button {
+  height: 72px;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--text);
+  font-size: 30px;
+  font-weight: 600;
+}
+
+.pin-pad button:active { background: var(--accent); color: #111; }
+
+@keyframes shake {
+  25% { transform: translateX(-8px); }
+  75% { transform: translateX(8px); }
+}

@@ -28,6 +28,19 @@ history row records `resolved_by: "photo"` (or `chip`, `voice`, `auto`), and the
 goes into the document's Remarks. The photo step has its own 6 s budget and never posts on
 its own. The button only appears when every option of the question is a distinct item.
 
+**Worker PIN on every transaction.** The app opens on a 4-digit PIN pad (again after
+**Switch worker** in settings). The PIN goes with every press (`pin` in the WebSocket start
+message, `X-FloorVoice-Pin` on `/act`, `/clarify`, `/clarify-photo`, `/undo`, `/history`,
+`/me`), in addition to the shared access key, and the server maps it to an ERPNext
+Employee; an unknown PIN gets "PIN not recognised". The worker's home line is the default
+destination and requesting warehouse, and their preferred language sets the speech bias and
+readback (a manual language override stays in settings; the old phone-level "My line" and
+language settings are gone). Every document is stamped: `floorvoice_worker` on Stock Entry
+and Material Request, `employee` on the job-card time log, and the worker's name at the
+start of Remarks. History rows carry `worker_id` / `worker_name`; `/history` shows the
+current worker's rows (`?all=1` for everyone's). Only the worker who posted a document can
+undo it, once.
+
 ## How it works
 
 ```
@@ -94,15 +107,32 @@ docker compose -f infra/erp-gateway.compose.yml --env-file .env up -d
 #    (ERP_BENCH_IMAGE / ERP_BENCH_NETWORK / ERP_SITES_VOLUME select your bench)
 
 # 2. Demo data: company, 3 warehouses, 30 items with voice aliases, opening stock,
-#    2 suppliers, BOMs, 5 work orders → job cards PO-JOB00001..5, bot user + API keys
+#    2 suppliers, BOMs, 5 work orders → job cards PO-JOB00001..5, 6 workers (Employee),
+#    bot user + API keys; generates FLOORVOICE_PIN_SALT in .env if it is empty
 uv run python -m seed.seed
 
 # 3. Server + public HTTPS tunnel for the phone (prints the URL with ?k=<access key>)
 scripts/dev.sh
 ```
 
-Open the printed URL on the phone once (the key is remembered), allow the microphone,
-choose **My line**, and hold the button while speaking.
+Open the printed URL on the phone once (the key is remembered), enter a worker PIN, allow
+the microphone, and hold the button while speaking.
+
+The seed adds these ERPNext custom fields:
+
+| Doctype | Field | Purpose |
+|---|---|---|
+| Item, Warehouse, Employee | `voice_aliases` | spoken names, used for ASR keywords and matching |
+| Employee | `floorvoice_pin` | HMAC-SHA256 of the PIN with `FLOORVOICE_PIN_SALT` (never the PIN) |
+| Employee | `floorvoice_home_warehouse` | home line: default destination / requesting warehouse |
+| Employee | `floorvoice_language` | `ta`, `si` or `en`: speech bias and readback |
+| Stock Entry, Material Request | `floorvoice_worker` | Employee who spoke |
+| Material Request | `floorvoice_remarks` | transcript (and label text), as Material Request has no Remarks |
+
+Demo workers (PIN → name, home line, language): 1111 Kumar Selvaraj, Line 1, Tamil ·
+2222 Priya Nadarajah, Line 2, Tamil · 3333 Nimal Perera, Line 1, Sinhala · 4444 Dilani
+Fernando, Line 2, Sinhala · 5555 Arjun Mahendran, Stores, English · 6666 Sarah Thomas,
+Line 1, English. The bot user gets the HR User role so it can read Employee.
 
 Without a phone: `uv run python -m scripts.say "move 2 bearing 6205 from stores to line 2"`
 runs the agent from text, and `uv run python -m scripts.ws_client samples/en_transfer.wav`
@@ -127,9 +157,10 @@ ERPNext login, so keep it up only while you need it.
 1. `uv run python -m scripts.demo_reset`: cancels all test
    stock entries and material requests (stock returns to the opening figures), deletes
    work orders and job cards, resets their numbering and reseeds, so the job cards are
-   PO-JOB00001–5 again. Restart the server afterwards.
+   PO-JOB00001–5 again and the six workers have their PINs, lines and languages back.
+   History (every worker's) is archived. Restart the server afterwards.
 2. `scripts/dev.sh` (and `scripts/erp_tunnel.sh` if showing ERPNext side by side).
-3. On the phone: reload, set **My line = Line 1**, check the volume is up.
+3. On the phone: reload, enter PIN 1111 (Kumar, Line 1, Tamil), check the volume is up.
 4. Speak the three lines in the table above, in that order. Hold the button until the end
    of the sentence; say the item number at a normal pace.
 5. The job-card line works once per reset (the card is then completed).
@@ -137,9 +168,9 @@ ERPNext login, so keep it up only while you need it.
 ## Tests
 
 ```bash
-uv run pytest                          # 127 unit tests: normaliser, resolver, ERP client and
+uv run pytest                          # 161 unit tests: normaliser, resolver, ERP client and
                                        # tools against mocked HTTP, agent loop with a scripted LLM,
-                                       # photo parsing and the photo/chip resume path
+                                       # photo parsing and the photo/chip resume path, worker PINs
 FLOORVOICE_LIVE=1 uv run pytest tests/test_live.py   # the 3 demo flows + the label-photo flow
                                                      # against live Spark + ERPNext (posts documents)
 uv run ruff check . && uv run ruff format --check .
@@ -169,7 +200,9 @@ uv run ruff check . && uv run ruff format --check .
   utterance's script.
 - Spoken readback uses the phone's built-in speech voices; without a Tamil or Sinhala voice
   (iPhones have no Sinhala voice) the confirmation is only shown on screen, not spoken.
-- One shared access key, no per-worker login; history is kept in a local file.
+- Worker identity: 4-digit PIN, no per-worker login. The PIN rides alongside one shared
+  access key; anyone who knows a PIN can act as that worker, and `?all=1` history is open to
+  any worker. History is kept in a local file.
 - Single transaction, single item per utterance; three transaction types only.
 - ERPNext v15 only (tested on 15.122). Partial job-card quantities are logged as time logs
   and the card is submitted only when the planned quantity is reached.
