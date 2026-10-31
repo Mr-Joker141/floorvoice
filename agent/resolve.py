@@ -15,7 +15,8 @@ MIN_SCORE = 0.5
 # Letters plus the Tamil block, so vowel signs/virama (not \w in Python) stay inside words.
 _WORD = re.compile(r"[0-9]+|(?:[^\W\d_]|[\u0B80-\u0BFF])+")
 _TAMIL = re.compile(r"[\u0B80-\u0BFF]")
-_JOB_NO = re.compile(r"(\d+)$")
+# "PO-JOB00005" and its amendment "PO-JOB00005-1" are both card 5.
+_JOB_NO = re.compile(r"JOB0*(\d+)|(\d+)$")
 # Filler words that should not count against a match.
 STOPWORDS = {
     "the", "a", "an", "of", "some", "me", "please", "pcs", "pieces", "nos", "number", "no",
@@ -168,7 +169,26 @@ def _pending(jc: dict[str, Any]) -> float:
 
 def job_number(name: str) -> int | None:
     found = _JOB_NO.search(name)
-    return int(found.group(1)) if found else None
+    return int(found.group(1) or found.group(2)) if found else None
+
+
+def code_numbers(item_code: str) -> set[str]:
+    """Part numbers in an item code worth confusing (3+ digits): BRG-6205 -> {"6205"}."""
+    return {t for t in tokens(item_code) if t.isdigit() and len(t) >= 3}
+
+
+def confusable(m: Masters, number: str) -> set[str]:
+    """Other item numbers one spoken digit away (6205 -> 6201, 6204, 6305)."""
+    out: set[str] = set()
+    for item in m.items:
+        for n in code_numbers(item["item_code"]):
+            if len(n) == len(number) and sum(a != b for a, b in zip(n, number, strict=True)) == 1:
+                out.add(n)
+    return out
+
+
+def spoken_numbers(text: str) -> set[str]:
+    return {t for t in tokens(text) if t.isdigit()}
 
 
 def search_job_cards(m: Masters, query: str) -> list[dict[str, Any]]:

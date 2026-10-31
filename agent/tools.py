@@ -113,6 +113,8 @@ class PostedDoc:
     doctype: str
     name: str
     summary: str
+    # How to reverse it (see ToolExecutor.undo); JSON-able.
+    undo: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -304,13 +306,12 @@ class ToolExecutor:
         mins_per_unit = float(jc.get("time_required") or 0) / planned if planned else 0.0
         start = now - timedelta(minutes=max(1.0, mins_per_unit * q))
         logs = list(jc.get("time_logs") or [])
-        logs.append(
-            {
-                "from_time": start.isoformat(sep=" "),
-                "to_time": now.isoformat(sep=" "),
-                "completed_qty": q,
-            }
-        )
+        new_log = {
+            "from_time": start.isoformat(sep=" "),
+            "to_time": now.isoformat(sep=" "),
+            "completed_qty": q,
+        }
+        logs.append(new_log)
         changes: dict[str, Any] = {"time_logs": logs, "remarks": self._remarks(ctx)}
         complete = abs(q - pending) < 1e-9
         if complete:
@@ -323,7 +324,9 @@ class ToolExecutor:
             summary = f"{_fmt(total)} {item} completed"
         else:
             summary = f"{_fmt(q)} {item} logged, {_fmt(total)} of {_fmt(planned)} done"
-        ctx.posted.append(PostedDoc("Job Card", name, summary))
+        ctx.posted.append(
+            PostedDoc("Job Card", name, summary, {"time_log": new_log, "submitted": complete})
+        )
         return {
             "ok": True,
             "doctype": "Job Card",
@@ -366,3 +369,49 @@ class ToolExecutor:
         summary = f"{kind} request for {_fmt(q)} {item['item_name']} to {_short(m, wh)}"
         ctx.posted.append(PostedDoc("Material Request", doc["name"], summary))
         return {"ok": True, "doctype": "Material Request", "name": doc["name"], "posted": summary}
+
+    # --- undo ---------------------------------------------------------------------------
+
+    async def undo(self, doc: PostedDoc) -> str:
+        """Reverse a document FloorVoice posted. Returns the ERPNext name now holding the
+        state (differs only for an amended job card)."""
+        try:
+            if doc.doctype in ("Stock Entry", "Material Request"):
+                await self.erp.call("frappe.client.cancel", doctype=doc.doctype, name=doc.name)
+                return doc.name
+            if doc.doctype == "Job Card":
+                return await self._undo_job_card(doc)
+            raise ToolError(f"cannot undo {doc.doctype}")
+        finally:
+            self.cache.invalidate()
+
+    async def _undo_job_card(self, doc: PostedDoc) -> str:
+        ours = doc.undo.get("time_log") or {}
+
+        def keep(row: dict[str, Any]) -> bool:
+            same = str(row.get("to_time", "")).startswith(str(ours.get("to_time", "")))
+            return not (same and float(row.get("completed_qty") or 0) == ours.get("completed_qty"))
+
+        jc = await self.erp.get_doc("Job Card", doc.name)
+        if jc.get("docstatus") == 0:
+            logs = [r for r in jc.get("time_logs") or [] if keep(r)]
+            await self.erp.update("Job Card", doc.name, {"time_logs": logs})
+            return doc.name
+        # Submitted (completed): cancel, then amend into an open draft without our log,
+        # as ERPNext's "Amend" button does.
+        await self.erp.call("frappe.client.cancel", doctype="Job Card", name=doc.name)
+        draft = {k: v for k, v in jc.items() if k not in _SYSTEM_FIELDS}
+        draft["amended_from"] = doc.name
+        draft["status"] = "Open"
+        for table, rows in list(draft.items()):
+            if isinstance(rows, list) and rows and isinstance(rows[0], dict):
+                draft[table] = [{k: v for k, v in r.items() if k not in _SYSTEM_FIELDS}
+                                for r in rows if table != "time_logs" or keep(r)]  # fmt: skip
+        amended = await self.erp.insert("Job Card", draft)
+        return str(amended["name"])
+
+
+_SYSTEM_FIELDS = {
+    "name", "owner", "creation", "modified", "modified_by", "docstatus", "idx", "parent",
+    "parentfield", "parenttype", "amended_from", "total_completed_qty", "status",
+}  # fmt: skip

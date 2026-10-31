@@ -271,3 +271,20 @@ main {
 }
 
 .history .erp-link { font-size: 13px; margin-top: 4px; }
+
+.card.undone { border-left-color: var(--muted); }
+.card.undone .card-status { color: var(--muted); }
+
+.undo {
+  display: inline-block;
+  margin: 10px 0 0 14px;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  font-size: 15px;
+}
+
+.undo:active { background: var(--line); }
+.history .did.undone { color: var(--muted); text-decoration: line-through; }

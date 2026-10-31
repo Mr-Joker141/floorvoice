@@ -91,6 +91,7 @@ const STATUS = {
   finish: "✗ Not posted",
   error: "✗ Not posted",
   repeat: "✗ Not posted — say it again",
+  undone: "↺ Cancelled in ERPNext",
 };
 
 function showTranscript(text, final) {
@@ -115,13 +116,49 @@ function erpLinks(docs) {
   return frag;
 }
 
+function undoButtons(docs) {
+  const frag = document.createDocumentFragment();
+  for (const d of docs) {
+    if (d.undone) continue;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "undo";
+    b.textContent = docs.length > 1 ? `↺ Undo ${d.name}` : "↺ Undo";
+    b.addEventListener("click", () => undoDoc(d, b));
+    frag.append(b);
+  }
+  return frag;
+}
+
+async function undoDoc(doc, button) {
+  if (busy) return;
+  unlockSpeech();
+  busy = true;
+  button.disabled = true;
+  button.textContent = "Cancelling…";
+  try {
+    const r = await api("/undo", { doctype: doc.doctype, name: doc.name });
+    busy = false;
+    showCard("undone", r.text, { docs: r.url ? [{ name: r.name, url: r.url, undone: true }] : [] });
+    speak(r.speech);
+    flashButton(false, "Cancelled");
+    refreshHistory();
+  } catch (e) {
+    busy = false;
+    button.disabled = false;
+    button.textContent = "↺ Undo";
+    showCard("error", `Undo failed: ${e.message}`);
+    speak("Undo failed.");
+  }
+}
+
 function showCard(kind, text, { options = [], meta = "", docs = [] } = {}) {
   el.card.hidden = false;
   el.card.className = `card ${kind}`;
   el.cardStatus.textContent = STATUS[kind] || "";
   el.cardText.textContent = text;
   el.cardMeta.textContent = meta;
-  el.cardLinks.replaceChildren(erpLinks(docs));
+  el.cardLinks.replaceChildren(erpLinks(docs), undoButtons(docs));
   el.options.innerHTML = "";
   for (const opt of options) {
     const b = document.createElement("button");
@@ -381,8 +418,9 @@ async function refreshHistory() {
       said.className = "said";
       said.textContent = [h.transcript, ...h.answers].join(" → ");
       const did = document.createElement("div");
-      did.className = `did ${h.kind}`;
-      did.textContent = h.text;
+      const undone = (h.documents || []).some((d) => d.undone);
+      did.className = `did ${undone ? "undone" : h.kind}`;
+      did.textContent = undone ? `${h.text} (undone)` : h.text;
       li.append(said, did, erpLinks(h.documents || []));
       el.history.append(li);
     }

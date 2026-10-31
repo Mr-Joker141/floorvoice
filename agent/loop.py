@@ -19,7 +19,7 @@ from openai import AsyncOpenAI
 from agent.normalize import detect_language, normalize_numbers
 from agent.prompt import SYSTEM_PROMPT
 from agent.readback import readback
-from agent.resolve import candidates
+from agent.resolve import candidates, code_numbers, confusable, spoken_numbers
 from agent.tools import TOOL_SCHEMAS, MastersCache, PostedDoc, ToolContext, ToolExecutor
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ MAX_STEPS = 6
 # release-to-confirmation under the 8 s target; over budget we ask the worker to repeat.
 TURN_BUDGET_S = 6.0
 HEDGE_AFTER_S = 2.5
+ALT_WAIT_S = 3.0  # longest wait for the second transcript before writing anyway
+WRITE_WITH_ITEM = {"create_stock_entry", "create_material_request"}
 T = TypeVar("T")
 
 
@@ -175,6 +177,9 @@ class AgentState:
     messages: list[dict[str, Any]] = field(default_factory=list)
     pending_call_id: str | None = None
     ctx: ToolContext = field(default_factory=ToolContext)
+    # Second, independent transcript of the same audio (file endpoint), used to catch a
+    # misheard part number before writing. None in text mode and after a clarification.
+    alt_transcript: asyncio.Future[str] | None = None
 
 
 @dataclass
@@ -203,7 +208,13 @@ class Agent:
         self.cache = cache
         self.turn_budget = turn_budget
 
-    async def start(self, transcript: str, *, home_warehouse: str | None = None) -> AgentState:
+    async def start(
+        self,
+        transcript: str,
+        *,
+        home_warehouse: str | None = None,
+        alt_transcript: asyncio.Future[str] | None = None,
+    ) -> AgentState:
         text = normalize_numbers(transcript.strip())
         lang = detect_language(text)
         masters = await self.cache.get()
@@ -217,7 +228,7 @@ class Agent:
             "home_warehouse": home["name"] if home else self.executor.default_warehouse,
             "candidates": cands,
         }
-        state = AgentState(transcript=transcript, language=lang)
+        state = AgentState(transcript=transcript, language=lang, alt_transcript=alt_transcript)
         state.ctx.transcript = transcript
         state.messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -230,10 +241,16 @@ class Agent:
         ]
         return state
 
-    async def act(self, transcript: str, *, home_warehouse: str | None = None) -> tuple[
-        AgentState, AgentResult
-    ]:  # fmt: skip
-        state = await self.start(transcript, home_warehouse=home_warehouse)
+    async def act(
+        self,
+        transcript: str,
+        *,
+        home_warehouse: str | None = None,
+        alt_transcript: asyncio.Future[str] | None = None,
+    ) -> tuple[AgentState, AgentResult]:
+        state = await self.start(
+            transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript
+        )
         return state, await self.run(state)
 
     async def clarify(self, state: AgentState, answer: str) -> AgentResult:
@@ -249,6 +266,7 @@ class Agent:
         else:
             state.messages.append({"role": "user", "content": answer})
         state.pending_call_id = None
+        state.alt_transcript = None  # the worker has now said explicitly what they meant
         return await self.run(state)
 
     async def run(self, state: AgentState) -> AgentResult:
@@ -279,6 +297,7 @@ class Agent:
                 return self._plain_reply(state, reply.content or "")
 
             terminal: tuple[ToolCall, dict[str, Any]] | None = None
+            confirm: tuple[str, list[str]] | None = None
             posted_before = len(state.ctx.posted)
             for call in reply.tool_calls:
                 args = _parse_args(call.arguments)
@@ -286,6 +305,18 @@ class Agent:
                     self._tool_result(
                         state, call.id, {"ok": False, "error": "arguments must be a JSON object"}
                     )
+                    continue
+                if confirm:
+                    self._tool_result(state, call.id, {"ok": False, "error": "skipped"})
+                    continue
+                if call.name in WRITE_WITH_ITEM and (
+                    confirm := await self._number_doubt(state, args, deadline)
+                ):
+                    self._tool_result(state, call.id, {
+                        "ok": False,
+                        "error": "not posted: speech recognition is unsure of the item "
+                        "number; the worker is being asked which one",
+                    })  # fmt: skip
                     continue
                 if call.name in ("ask_user", "finish"):
                     if terminal is None:
@@ -297,6 +328,10 @@ class Agent:
                 log.info("tool %s %s -> %s", call.name, args, _short_json(result))
                 self._tool_result(state, call.id, result)
 
+            if confirm:
+                if terminal:
+                    self._tool_result(state, terminal[0].id, {"ok": False, "error": "ignored"})
+                return self._ask(state, *confirm)
             if len(state.ctx.posted) > posted_before:
                 if terminal:
                     self._tool_result(state, terminal[0].id, {"ok": True})
@@ -312,6 +347,56 @@ class Agent:
                 return AgentResult("finish", str(args.get("summary") or "").strip() or "OK.")
         log.warning("agent hit MAX_STEPS for %r", state.transcript)
         return AgentResult("error", _sorry(state.language, state.transcript))
+
+    async def _number_doubt(
+        self, state: AgentState, args: dict[str, Any], deadline: float
+    ) -> tuple[str, list[str]] | None:
+        """(question, options) if the second transcript disagrees on the item number."""
+        if state.alt_transcript is None:
+            return None
+        m = await self.cache.get()
+        numbers = code_numbers(str(args.get("item_code", "")))
+        heard = spoken_numbers(normalize_numbers(state.transcript))
+        doubtful = {n: confusable(m, n) for n in numbers & heard if confusable(m, n)}
+        if not doubtful:
+            return None
+        wait = max(0.5, min(ALT_WAIT_S, deadline - time.monotonic() - 0.5))
+        try:
+            alt = await asyncio.wait_for(asyncio.shield(state.alt_transcript), wait)
+        except (TimeoutError, Exception) as e:  # noqa: BLE001 - check is best-effort
+            log.info("second transcript unavailable (%s); posting as heard", type(e).__name__)
+            return None
+        alt_numbers = spoken_numbers(normalize_numbers(alt))
+        for number, siblings in doubtful.items():
+            rivals = sorted(siblings & alt_numbers)
+            if number not in alt_numbers and rivals:
+                log.warning("number doubt %s vs %s: %r / %r", number, rivals,
+                            state.transcript, alt)  # fmt: skip
+                choices = [number, *rivals]
+                names = []
+                for n in choices:
+                    item = next((i for i in m.items if n in code_numbers(i["item_code"])), None)
+                    names.append(item["item_name"] if item else n)
+                if state.language == "ta":
+                    question = " இல்லை ".join(f"{n}-ஆ" for n in choices) + "?"
+                else:
+                    question = f"Did you say {' or '.join(choices)}?"
+                return question, names
+        return None
+
+    def _ask(self, state: AgentState, question: str, options: list[str]) -> AgentResult:
+        """Server-initiated question, recorded as an ask_user call so clarify resumes it."""
+        call_id = f"verify_{uuid.uuid4().hex[:12]}"
+        args = {"question": question, "options": options}
+        state.messages.append({
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": call_id, "type": "function",
+                            "function": {"name": "ask_user", "arguments": json.dumps(args)}}],
+        })  # fmt: skip
+        state.pending_call_id = call_id
+        state.alt_transcript = None
+        return AgentResult("ask", question, options=options)
 
     def _done(self, state: AgentState) -> AgentResult:
         display, speech = readback(state.ctx.posted, state.language)

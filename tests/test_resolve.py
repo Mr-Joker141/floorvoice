@@ -96,3 +96,13 @@ def test_unknown_number_falls_back_to_family(masters: Masters) -> None:
     assert codes(hits) == ["BRG-6201", "BRG-6204", "BRG-6205", "BRG-6305"]
     assert all(h["note"] == "spoken number matched no item" for h in hits)
     assert search_items(masters, "unobtainium 9999") == []
+
+
+def test_confusable_part_numbers(masters: Masters) -> None:
+    from agent.resolve import code_numbers, confusable, job_number
+
+    assert code_numbers("BRG-6205") == {"6205"}
+    assert code_numbers("BLT-M8X30") == set()  # short numbers are not part numbers
+    assert confusable(masters, "6205") == {"6201", "6204", "6305"}
+    assert confusable(masters, "6305") == {"6205"}
+    assert job_number("PO-JOB00005-1") == 5  # amended job card keeps its number

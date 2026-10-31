@@ -52,6 +52,11 @@ Design points (details and measurements in [NOTES.md](NOTES.md)):
   card, quantity and stock on the server before calling ERPNext; errors go back to the
   model as tool results. Each document's remarks record the exact transcript, and the audio
   is kept in `data/audio/`.
+- **Misheard part numbers.** The audio is also transcribed a second time (file endpoint).
+  Before posting an item whose number is one digit away from another item's (6205/6305),
+  the two transcripts are compared; if they disagree the worker is asked "6205 or 6305?"
+  instead. Every confirmation card has an **↺ Undo** button that cancels the document
+  (or removes the job-card time log) in ERPNext.
 - **Tail latency.** Spark requests are hedged (a duplicate is raced after 2.5 s) and each
   turn has a 6 s budget; over budget the worker is asked to repeat, quoting what was heard.
 
@@ -114,7 +119,7 @@ ERPNext login, so keep it up only while you need it.
 ## Tests
 
 ```bash
-uv run pytest                          # 68 unit tests: normaliser, resolver, ERP client and
+uv run pytest                          # 77 unit tests: normaliser, resolver, ERP client and
                                        # tools against mocked HTTP, agent loop with a scripted LLM
 FLOORVOICE_LIVE=1 uv run pytest tests/test_live.py   # the 3 demo flows against live Spark +
                                                      # ERPNext, with the 8 s budget (posts documents)
@@ -136,8 +141,10 @@ uv run ruff check . && uv run ruff format --check .
 ## Limitations
 
 - **Tamil accuracy is not measured yet.** Only a handful of real Tamil-English phone
-  recordings were tested. Spoken item numbers are the weak point (e.g. "6205" heard as
-  "2625Z"); FloorVoice then asks which item was meant rather than guessing.
+  recordings were tested. Spoken item numbers are the weak point ("6205" heard as "2625Z"
+  or as the real item "6305"). FloorVoice asks when the number matches nothing or when its
+  two transcripts disagree, but if both mishear the same way it posts the wrong item:
+  the worker must listen to the readback and use Undo.
 - Clarifying questions follow the dominant language of the utterance: mostly-English
   code-switching gets an English question. Confirmations after a write are always in the
   utterance's script.

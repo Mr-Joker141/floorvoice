@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 from fastapi import WebSocket, WebSocketDisconnect
 
 from erp.masters import keywords_from_masters
-from server.asr import AsrError, RealtimeSession, pcm_to_wav
+from server.asr import AsrError, RealtimeSession, pcm_to_wav, transcribe_file
 
 if TYPE_CHECKING:
     from server.app import Service
@@ -83,6 +83,7 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
                 await _send(ws, {"type": "partial", "text": ev.text})
         return final
 
+    alt: asyncio.Future[str] | None = None
     fwd = asyncio.create_task(forward())
     evs = asyncio.create_task(transcripts())
     cancelled = False
@@ -101,6 +102,12 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
                 if kind == "stop":
                     t_release = time.monotonic()
                     queue.put_nowait(None)
+                    if mode != "clarify" and pcm:
+                        # Independent second transcript, used to double-check part numbers.
+                        alt = asyncio.ensure_future(transcribe_file(
+                            svc.settings.meta_api_key, pcm_to_wav(bytes(pcm), rate),
+                            keywords=asr.keywords,
+                        ))  # fmt: skip
                     break
                 if kind == "cancel":
                     cancelled = True
@@ -138,7 +145,7 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
             if mode == "clarify" and svc.has_pending(session_id):
                 resp = await svc.clarify(session_id, final)
             else:
-                resp = await svc.act(final, session_id, home)
+                resp = await svc.act(final, session_id, home, alt_transcript=alt)
         except Exception as e:  # AgentFailure, ERP down, ...
             log.exception("act failed for %r", final)
             await _send(ws, {"type": "error", "message": f"Could not complete: {e}"})
@@ -151,6 +158,8 @@ async def handle_audio(ws: WebSocket, svc: Service) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if alt is not None and not alt.done():
+            alt.cancel()
         for task in (fwd, evs):
             task.cancel()
         for task in (fwd, evs):

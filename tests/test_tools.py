@@ -183,3 +183,54 @@ async def test_completed_job_card_refused(ex: ToolExecutor, ctx: ToolContext) ->
     with respx.mock:
         r = await ex.run("complete_job_card", {"name": "PO-JOB00004", "completed_qty": 1}, ctx)
     assert r == {"ok": False, "error": "PO-JOB00004 is already completed"}
+
+
+@respx.mock
+async def test_undo_cancels_stock_entry(ex: ToolExecutor) -> None:
+    from agent.tools import PostedDoc
+
+    route = respx.post(f"{BASE}/api/method/frappe.client.cancel").respond(json={"message": None})
+    assert await ex.undo(PostedDoc("Stock Entry", "SE9", "2 x")) == "SE9"
+    assert b"name=SE9" in route.calls.last.request.content
+
+
+@respx.mock
+async def test_undo_partial_job_card_removes_our_log(ex: ToolExecutor) -> None:
+    from agent.tools import PostedDoc
+
+    ours = {"from_time": "2026-10-31 08:00:00", "to_time": "2026-10-31 08:10:00",
+            "completed_qty": 10.0}  # fmt: skip
+    theirs = {"name": "r1", "to_time": "2026-10-31 07:00:00.000000", "completed_qty": 5.0}
+    respx.get(f"{BASE}/api/resource/Job%20Card/PO-JOB00001").respond(json={"data": {
+        "name": "PO-JOB00001", "docstatus": 0,
+        "time_logs": [theirs, {"name": "r2", "to_time": "2026-10-31 08:10:00.000000",
+                               "completed_qty": 10.0}],
+    }})  # fmt: skip
+    put = respx.put(f"{BASE}/api/resource/Job%20Card/PO-JOB00001").respond(json={"data": {}})
+    doc = PostedDoc("Job Card", "PO-JOB00001", "10 x", {"time_log": ours, "submitted": False})
+    assert await ex.undo(doc) == "PO-JOB00001"
+    assert json.loads(put.calls.last.request.content) == {"time_logs": [theirs]}
+
+
+@respx.mock
+async def test_undo_completed_job_card_cancels_and_amends(ex: ToolExecutor) -> None:
+    from agent.tools import PostedDoc
+
+    ours = {"to_time": "2026-10-31 08:10:00", "completed_qty": 10.0}
+    respx.get(f"{BASE}/api/resource/Job%20Card/PO-JOB00005").respond(json={"data": {
+        "name": "PO-JOB00005", "docstatus": 1, "status": "Completed", "for_quantity": 10,
+        "work_order": "WO5", "creation": "x",
+        "time_logs": [{"name": "r1", "parent": "PO-JOB00005", "to_time": "2026-10-31 08:10:00",
+                       "completed_qty": 10.0}],
+    }})  # fmt: skip
+    cancel = respx.post(f"{BASE}/api/method/frappe.client.cancel").respond(json={})
+    ins = respx.post(f"{BASE}/api/resource/Job%20Card").respond(
+        json={"data": {"name": "PO-JOB00005-1"}}
+    )
+    doc = PostedDoc("Job Card", "PO-JOB00005", "10 x", {"time_log": ours, "submitted": True})
+    assert await ex.undo(doc) == "PO-JOB00005-1"
+    assert cancel.called
+    sent = json.loads(ins.calls.last.request.content)
+    assert sent["amended_from"] == "PO-JOB00005" and sent["status"] == "Open"
+    assert sent["time_logs"] == [] and "name" not in sent and "creation" not in sent
+    assert sent["work_order"] == "WO5"

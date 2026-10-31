@@ -161,3 +161,22 @@ Running log of decisions and of places where reality differed from the docs.
 - Outcome is shown on the button (green "Posted ✓" / red "Not posted", vibration) and as a
   heading on the card; presses with no audio say so ("No sound from the microphone").
 - "My line" lists only floor warehouses (those with voice aliases).
+
+## 2026-10-31 — misheard part numbers: second transcript + Undo
+
+- Phone test: "இரண்டு bearing 6205 …" was transcribed as **6305** (a real item) and posted.
+  Re-sending that recording: 6205 once, 6305 twice. The audio is genuinely borderline.
+- **Second transcript.** On release the server also sends the audio to the file endpoint.
+  Just before a stock entry / material request whose item number has a one-digit
+  neighbour in the item list (6205 ↔ 6201, 6204, 6305), the agent compares: if the
+  second transcript lacks the number and contains a neighbour, nothing is written and the
+  server asks "6205 or 6305?" (as a synthetic `ask_user`, so the answer resumes the same
+  conversation). If they agree, or the second transcript is late (> 3 s) or unreadable,
+  it posts. Skipped after a clarification (the worker chose explicitly).
+  Replaying the problem recording 4×: asked twice, posted 6305 twice (both transcripts
+  agreed). It catches disagreement, not a shared mistake.
+- **Undo.** `POST /undo` reverses only documents in FloorVoice's own history, once.
+  Stock Entry / Material Request: cancel. Job Card with a partial log: remove our time
+  log. Completed Job Card: cancel, then insert an amended draft (`amended_from`), as
+  ERPNext's Amend does; the reopened card is PO-JOB00002-1 and "job card two" still
+  finds it. All four paths verified against ERPNext 15.122.

@@ -1,3 +1,4 @@
+import asyncio
 import json
 from typing import Any
 
@@ -221,3 +222,58 @@ async def test_hedged_survives_one_failure() -> None:
         return "ok"
 
     assert await hedged(make, 0.01) == "ok"
+
+
+def _future(value: str | Exception) -> asyncio.Future[str]:
+    import asyncio
+
+    fut: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+    if isinstance(value, Exception):
+        fut.set_exception(value)
+    else:
+        fut.set_result(value)
+    return fut
+
+
+def _transfer(code: str, i: int = 1) -> ToolCall:
+    return call("create_stock_entry", i, purpose="Material Transfer", item_code=code, qty=2,
+                from_warehouse="Stores", to_warehouse="Line 2")  # fmt: skip
+
+
+async def test_number_doubt_asks_instead_of_posting(make) -> None:
+    agent, llm, ex = make(LlmReply(None, [_transfer("BRG-6305")]),
+                          LlmReply(None, [_transfer("BRG-6205", 2)]))  # fmt: skip
+    alt = _future("இரண்டு bearing 6205 store ல இருந்து line two க்கு மாற்று")
+    state, r = await agent.act("இரண்டு bearing 6305 store ல line two கு மாற்று", alt_transcript=alt)
+    assert r.kind == "ask"
+    assert r.text == "6305-ஆ இல்லை 6205-ஆ?"
+    assert r.options == ["Ball Bearing 6305", "Ball Bearing 6205"]
+    assert ex.calls == []  # nothing written
+    assert state.pending_call_id.startswith("verify_")
+    r2 = await agent.clarify(state, "Ball Bearing 6205")
+    assert r2.kind == "done"
+    assert ex.calls[0][1]["item_code"] == "BRG-6205"
+    # the conversation stays well-formed: every tool call got exactly one result
+    ids = [
+        c["id"] for m in llm.seen[1] if m["role"] == "assistant" for c in m.get("tool_calls", [])
+    ]
+    results = [m["tool_call_id"] for m in llm.seen[1] if m["role"] == "tool"]
+    assert sorted(ids) == sorted(results)
+
+
+@pytest.mark.parametrize(
+    "alt",
+    ["move 2 bearing 6305 from stores to line two", "move two bearing from stores", RuntimeError()],
+)
+async def test_number_doubt_posts_when_no_conflict(make, alt) -> None:
+    agent, _, ex = make(LlmReply(None, [_transfer("BRG-6305")]))
+    _, r = await agent.act("move 2 bearing 6305 from stores to line 2", alt_transcript=_future(alt))
+    assert r.kind == "done" and ex.calls[0][1]["item_code"] == "BRG-6305"
+
+
+async def test_no_doubt_check_for_items_without_neighbours(make) -> None:
+    agent, _, _ex = make(LlmReply(None, [call("create_stock_entry", purpose="Material Issue",
+                                             item_code="GRS-EP2", qty=2, from_warehouse="Line 2",
+                                             to_warehouse=None)]))  # fmt: skip
+    _, r = await agent.act("issue 2 kg grease from line 2", alt_transcript=_future("issue 9 kg"))
+    assert r.kind == "done"

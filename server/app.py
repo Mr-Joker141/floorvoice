@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
@@ -22,6 +23,8 @@ from pydantic import BaseModel, Field
 from agent.loop import AgentResult, AgentState
 from agent.normalize import detect_language, token_count
 from agent.runtime import Runtime, build_runtime
+from agent.tools import PostedDoc, ToolError
+from erp.client import ErpError
 from server.config import ROOT, Settings, get_settings
 
 log = logging.getLogger("floorvoice")
@@ -91,6 +94,20 @@ class Store:
         with self.path.open("a") as f:
             f.write(json.dumps(asdict(entry), ensure_ascii=False) + "\n")
 
+    def save_all(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lines = [json.dumps(asdict(h), ensure_ascii=False) + "\n" for h in self.history]
+        tmp = self.path.with_suffix(".tmp")
+        tmp.write_text("".join(lines))
+        tmp.replace(self.path)
+
+    def find_doc(self, doctype: str, name: str) -> tuple[HistoryEntry, dict[str, str]] | None:
+        for entry in reversed(self.history):
+            for doc in entry.documents:
+                if doc["doctype"] == doctype and doc["name"] == name:
+                    return entry, doc
+        return None
+
     def take_pending(self, session_id: str) -> Pending | None:
         now = time.monotonic()
         for sid in [s for s, p in self.pending.items() if now - p.created > PENDING_TTL]:
@@ -126,7 +143,7 @@ def erp_link(doctype: str, name: str) -> str:
 def _docs(result: AgentResult) -> list[dict[str, str]]:
     return [
         {"doctype": p.doctype, "name": p.name, "summary": p.summary,
-         "url": erp_link(p.doctype, p.name)}
+         "url": erp_link(p.doctype, p.name), "undo": json.dumps(p.undo)}
         for p in result.posted
     ]  # fmt: skip
 
@@ -173,7 +190,12 @@ class Service:
         )
 
     async def act(
-        self, transcript: str, session_id: str, home_warehouse: str | None = None
+        self,
+        transcript: str,
+        session_id: str,
+        home_warehouse: str | None = None,
+        *,
+        alt_transcript: asyncio.Future[str] | None = None,
     ) -> ActResponse:
         t0 = time.monotonic()
         transcript = transcript.strip()
@@ -190,7 +212,9 @@ class Service:
             text="",
         )
         try:
-            state, result = await self.rt.agent.act(transcript, home_warehouse=home_warehouse)
+            state, result = await self.rt.agent.act(
+                transcript, home_warehouse=home_warehouse, alt_transcript=alt_transcript
+            )
         except Exception as e:
             log.exception("agent failed for %r", transcript)
             raise AgentFailure(str(e)) from e
@@ -264,6 +288,49 @@ async def clarify(req: ClarifyRequest) -> ActResponse:
         raise HTTPException(404, "No open question for this session") from e
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
+
+
+class UndoRequest(BaseModel):
+    doctype: str
+    name: str
+
+
+def _undo_text(lang: str, doc: dict[str, str], holder: str) -> str:
+    reopened = holder != doc["name"]
+    if lang == "ta":
+        tail = f" {holder} ஆக மீண்டும் திறக்கப்பட்டது." if reopened else ""
+        return f"ரத்து செய்யப்பட்டது {doc['name']}: {doc['summary']}.{tail}"
+    tail = f" Reopened as {holder}." if reopened else ""
+    return f"Cancelled {doc['name']}: {doc['summary']}.{tail}"
+
+
+@app.post("/undo", dependencies=[Depends(require_key)])
+async def undo(req: UndoRequest) -> dict[str, Any]:
+    """Reverse a document FloorVoice posted (only those in its own history)."""
+    svc = service()
+    found = svc.store.find_doc(req.doctype, req.name)
+    if found is None:
+        raise HTTPException(404, "FloorVoice did not post that document")
+    entry, doc = found
+    if doc.get("undone"):
+        raise HTTPException(409, f"{req.name} was already undone")
+    posted = PostedDoc(
+        doc["doctype"], doc["name"], doc["summary"], json.loads(doc.get("undo") or "{}")
+    )
+    try:
+        holder = await svc.rt.agent.executor.undo(posted)
+    except (ErpError, ToolError) as e:
+        log.error("undo %s %s failed: %s", req.doctype, req.name, e)
+        raise HTTPException(409, f"ERPNext refused: {e}") from e
+    doc["undone"] = "1"
+    doc["now"] = holder
+    svc.store.save_all()
+    lang = detect_language(entry.transcript)
+    text = _undo_text(lang, doc, holder)
+    speech = "ரத்து செய்யப்பட்டது." if lang == "ta" else "Cancelled."
+    log.info("undo %s %s -> %s", req.doctype, req.name, holder)
+    return {"ok": True, "text": text, "speech": speech, "name": holder,
+            "url": erp_link(req.doctype, holder)}  # fmt: skip
 
 
 @app.get("/history", dependencies=[Depends(require_key)])
