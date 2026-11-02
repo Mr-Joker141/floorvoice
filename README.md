@@ -1,8 +1,9 @@
 # FloorVoice
 
-Voice-first front end to ERPNext for shop-floor workers. Hold a button on a phone, speak in
-Tamil, English or a mix of both, and a Muse Spark agent posts the ERPNext transaction and
-reads back a one-line confirmation, typically 2–5 s after the button is released.
+Voice-first front end to ERPNext for shop-floor workers. Hold a button on a phone, say what
+happened in Tamil or English (or a mix of both), with Sinhala experimental, and a Muse Spark
+agent posts the ERPNext transaction and reads back a one-line confirmation: 2–5 s typical
+after the button is released, 6 s budget.
 
 Built for the Meta Global AI Developer Hackathon (Oct 30 – Nov 4, 2026).
 
@@ -11,6 +12,15 @@ Built for the Meta Global AI Developer Hackathon (Oct 30 – Nov 4, 2026).
 | "இரண்டு bearing 6205 store-ல இருந்து line two-க்கு மாத்து" | Submits a **Stock Entry** (Material Transfer): 2 × Ball Bearing 6205, Stores → Line 2. Confirms in Tamil. |
 | "Job card five completed, ten pieces" | Logs 10 pieces on **Job Card** PO-JOB00005 and submits it once the planned quantity is reached. |
 | "Send me bearings" → *"Which bearing, and how many?"* → "6205, ten pieces" | Asks one question (with tappable options), then submits a **Material Request** for 10 × 6205 to the worker's line. |
+
+**Experimental: Sinhala.** Sinhala is not in Voice Transcribe's supported language list;
+these work on simple requests via keyword biasing and number normalisation, and are not
+reliable for part numbers.
+
+| Worker says | FloorVoice does in ERPNext |
+|---|---|
+| "මට බෝල්ට් දහයක් එවන්න" | Submits a **Material Request** for 10 × Hex Bolt M10 to the worker's line. Confirms in Sinhala. |
+| "mata bearing 10k ewanna" (typed Sinhala in English letters) | Read as Sinhala ("10k" = 10); asks which bearing, in Sinhala. |
 
 Also supported: material issue ("issue two kg grease from line two"), purchase requests
 ("order 20 hex nut M10"), and partial job-card progress ("20 of 50 done").
@@ -91,6 +101,17 @@ Design points (details and measurements in [NOTES.md](NOTES.md)):
 - **Tail latency.** Spark requests are hedged (a duplicate is raced after 2.5 s) and each
   turn has a 6 s budget; over budget the worker is asked to repeat, quoting what was heard.
 
+## Agentic behaviour
+
+- Resolves item, warehouse and job card against ERP masters before deciding which transaction to post.
+- Chooses Material Transfer vs Material Issue from the utterance, and checks current stock before either.
+- Re-validates every field and checks stock before writing; refuses to post when the two transcripts disagree on a part number.
+- Asks exactly one question when a mandatory field is ambiguous, and accepts a spoken answer, a tap, or a photo of the label resolved by Muse Spark vision.
+- Builds the confirmation from the posted ERPNext document, never from model text.
+- Offers a one-time, same-worker Undo with ERPNext-correct cancel and amend semantics.
+
+Models: Muse Spark 1.3 (tool calling, structured output, image understanding), Muse Voice Transcribe 1.0 (realtime and file endpoints, keyword and language biasing).
+
 ## Running it
 
 Requirements: Python 3.11 with [uv](https://docs.astral.sh/uv/), Docker, a Meta Model API
@@ -168,7 +189,7 @@ ERPNext login, so keep it up only while you need it.
 ## Tests
 
 ```bash
-uv run pytest                          # 161 unit tests: normaliser, resolver, ERP client and
+uv run pytest                          # 181 unit tests: normaliser, resolver, ERP client and
                                        # tools against mocked HTTP, agent loop with a scripted LLM,
                                        # photo parsing and the photo/chip resume path, worker PINs
 FLOORVOICE_LIVE=1 uv run pytest tests/test_live.py   # the 3 demo flows + the label-photo flow
@@ -195,6 +216,8 @@ uv run ruff check . && uv run ruff format --check .
   or as the real item "6305"). FloorVoice asks when the number matches nothing or when its
   two transcripts disagree, but if both mishear the same way it posts the wrong item:
   the worker must listen to the readback and use Undo.
+- **Sinhala is experimental.** It is not in Voice Transcribe's supported language list;
+  recognition varies run to run, and spoken part numbers are not reliable.
 - Clarifying questions follow the dominant language of the utterance: mostly-English
   code-switching gets an English question. Confirmations after a write are always in the
   utterance's script.
@@ -208,9 +231,8 @@ uv run ruff check . && uv run ruff format --check .
   and the card is submitted only when the planned quantity is reached.
 - Quick tunnels (`trycloudflare.com`) are for demos: the URL changes if the tunnel restarts.
 
-## What was built during the hackathon
+## Built during the hackathon
 
-All code in this repository was written between Oct 30 and Nov 4, 2026, during the event.
-ERPNext / Frappe is a pre-existing open-source dependency (GPLv3) and is not part of this
-work; FloorVoice talks to it only over its REST API. Models used: Meta Muse Spark 1.3
-(agent) and Muse Voice Transcribe 1.0 (speech recognition).
+All FloorVoice code (server, agent, erp client, pwa, seed, scripts, tests) was written
+between Oct 30 and Nov 3, 2026. ERPNext/Frappe is a pre-existing open-source dependency
+used only via its REST API. No code from any other project was reused.
