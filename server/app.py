@@ -883,6 +883,19 @@ async def history(worker: Worker, limit: int = 50, all: int = 0) -> list[dict[st
     return rows
 
 
+class ClientLog(BaseModel):
+    event: str = Field(max_length=40)
+    detail: str = Field(default="", max_length=500)
+    ua: str = Field(default="", max_length=300)
+
+
+@app.post("/client-log", dependencies=[Depends(require_key)])
+async def client_log(entry: ClientLog) -> dict[str, bool]:
+    """Phone-side failures (camera, recorder) that the server would otherwise never see."""
+    log.warning("client %s: %s | %s", entry.event, entry.detail, entry.ua)
+    return {"ok": True}
+
+
 @app.get("/healthz")
 async def healthz() -> dict[str, str]:
     return {"status": "ok"}

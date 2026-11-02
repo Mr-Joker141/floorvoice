@@ -436,3 +436,6 @@ main {
 .review-note:empty { display: none; }
 .card.count, .card.review { border-left-color: var(--ask); }
 .card.count .card-status, .card.review .card-status { color: var(--ask); }
+.count-native { min-height: 44px; border-radius: 12px; border: 1px solid var(--accent); background: transparent;
+  color: var(--accent); font: 600 0.95rem system-ui; }
+.count-error { margin: 0; color: var(--err); font-weight: 600; }

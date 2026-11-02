@@ -14,7 +14,8 @@ const el = {
   settingsLine: $("settings-line"), langOverride: $("lang-override"), switchWorker: $("switch-worker"),
   pinScreen: $("pin-screen"), pinDots: $("pin-dots"), pinMsg: $("pin-msg"), pinPad: $("pin-pad"),
   countRow: $("count-row"), countVideo: $("count-video"), countTimer: $("count-timer"),
-  countBtn: $("count-btn"), countInput: $("count-input"), reviewRow: $("review-row"),
+  countBtn: $("count-btn"), countInput: $("count-input"), countNative: $("count-native"),
+  reviewRow: $("review-row"),
   reviewImg: $("review-img"), reviewCanvas: $("review-canvas"), reviewNote: $("review-note"),
 };
 
@@ -258,6 +259,7 @@ function showCard(kind, text, { options = [], meta = "", docs = [], photo = fals
   el.cardStatus.textContent = STATUS[kind] || "";
   el.cardText.textContent = text;
   el.cardMeta.textContent = meta;
+  el.cardMeta.className = "card-meta";
   el.cardLinks.replaceChildren(erpLinks(docs), undoButtons(docs));
   el.options.innerHTML = "";
   options.forEach((opt, i) => {
@@ -275,6 +277,7 @@ function showCard(kind, text, { options = [], meta = "", docs = [], photo = fals
   el.countBtn.textContent = "● Start filming";
   el.countTimer.hidden = true;
   showReview(kind === "review" ? review : null);
+  if (kind === "count") startPreview();
   // Only for a question over an item; the server decides (r.photo).
   el.photoRow.hidden = !(kind === "ask" && photo);
   el.photoBtn.disabled = false;
@@ -609,6 +612,42 @@ function stopCamera() {
   el.countVideo.srcObject = null;
 }
 
+// Camera problems on phones are invisible from the server: report them to its log.
+function clientLog(event, detail) {
+  fetch("/client-log", { method: "POST", headers: headers(),
+    body: JSON.stringify({ event, detail: String(detail).slice(0, 500), ua: navigator.userAgent }),
+  }).catch(() => {});
+}
+
+function cameraError(e) {
+  const msg = `${e.name || "Error"}: ${e.message || e}`;
+  clientLog("camera", msg);
+  el.cardMeta.textContent = `Camera didn't start (${msg}). Tap "Use the camera app instead".`;
+  el.cardMeta.className = "card-meta count-error";
+}
+
+async function startPreview() {
+  if (camStream) return true;
+  if (!navigator.mediaDevices?.getUserMedia) {
+    cameraError(new Error("this browser has no camera access"));
+    return false;
+  }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (e) {
+    cameraError(e);
+    return false;
+  }
+  el.countVideo.srcObject = camStream;
+  el.countVideo.muted = true;
+  el.countVideo.setAttribute("playsinline", "");
+  try { await el.countVideo.play(); } catch (e) { clientLog("preview-play", `${e.name}: ${e.message}`); }
+  return true;
+}
+
 function clipType() {
   if (!window.MediaRecorder) return null;
   const types = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp8", "video/webm"];
@@ -624,22 +663,20 @@ el.countBtn.addEventListener("click", async () => {
   }
   const type = clipType();
   if (type === null) { // no MediaRecorder: the phone's own camera app
+    clientLog("recorder", "MediaRecorder not available");
     el.countInput.value = "";
     el.countInput.click();
     return;
   }
+  if (!(await startPreview())) return;
+  const chunks = [];
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: false,
-    });
+    recorder = new MediaRecorder(camStream, type ? { mimeType: type } : undefined);
   } catch (e) {
-    el.cardMeta.textContent = `Camera unavailable: ${e.message}`;
+    clientLog("recorder", `${e.name}: ${e.message} (type ${type})`);
+    cameraError(e);
     return;
   }
-  el.countVideo.srcObject = camStream;
-  const chunks = [];
-  recorder = new MediaRecorder(camStream, type ? { mimeType: type } : undefined);
   recorder.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
   const started = performance.now();
   recorder.onstop = () => {
@@ -660,6 +697,13 @@ el.countBtn.addEventListener("click", async () => {
     if (ms >= MAX_CLIP_MS && recorder?.state === "recording") recorder.stop();
   }, 200);
   navigator.vibrate?.(20);
+});
+
+el.countNative.addEventListener("click", () => {
+  if (busy) return;
+  stopCamera();
+  el.countInput.value = "";
+  el.countInput.click();
 });
 
 el.countInput.addEventListener("change", () => {
