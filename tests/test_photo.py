@@ -88,6 +88,7 @@ def test_request_shape_sends_image_as_data_url() -> None:
     assert image["type"] == "image_url"
     assert image["image_url"]["url"].startswith("data:image/jpeg;base64,")
     assert body["response_format"]["type"] == "json_schema"
+    assert body["reasoning_effort"] == "minimal"  # "low" ran past the 6 s budget on a phone
 
 
 async def test_identify_times_out_to_no_match() -> None:

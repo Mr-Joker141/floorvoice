@@ -119,7 +119,11 @@ class SparkVision:
         api_key: str,
         base_url: str,
         model: str,
-        reasoning_effort: str = "low",
+        # Reading one label needs no deliberation. Measured on a real phone photo of a
+        # handwritten "6205" (1280 px): "low" median 4.3 s, max 5.0 s, one phone attempt
+        # over the 6 s budget; "minimal" median 1.7 s, max 3.0 s, still 8/8 correct, and
+        # a photo with no label still comes back as no match.
+        reasoning_effort: str = "minimal",
         hedge_after: float | None = VISION_HEDGE_AFTER_S,
     ) -> None:
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
