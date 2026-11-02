@@ -26,7 +26,7 @@ from erp.client import ErpClient, ErpError
 from seed.seed import SEED_MARK
 from server.config import get_settings
 
-BENCH_CONTAINER = os.environ.get("ERP_BENCH_CONTAINER", "nch-uat-backend")
+BENCH_CONTAINER = os.environ.get("ERP_BENCH_CONTAINER", "frappe_docker-backend-1")
 # Order matters: job cards before work orders.
 # Stock Reconciliations (video counts) first: they sit on top of the stock entries.
 DOCTYPES = ["Stock Reconciliation", "Stock Entry", "Material Request", "Job Card", "Work Order"]

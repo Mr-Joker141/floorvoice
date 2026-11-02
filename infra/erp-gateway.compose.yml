@@ -5,7 +5,7 @@ name: floorvoice
 
 services:
   erp-gateway:
-    image: ${ERP_BENCH_IMAGE:-nch-uat:15}
+    image: ${ERP_BENCH_IMAGE:-frappe/erpnext:v15}
     container_name: floorvoice-erp-gateway
     restart: unless-stopped
     command: [nginx-entrypoint.sh]
@@ -27,9 +27,9 @@ services:
 volumes:
   bench-sites:
     external: true
-    name: ${ERP_SITES_VOLUME:-nch-uat_nch-sites}
+    name: ${ERP_SITES_VOLUME:-frappe_docker_sites}
 
 networks:
   bench:
     external: true
-    name: ${ERP_BENCH_NETWORK:-nch-uat_default}
+    name: ${ERP_BENCH_NETWORK:-frappe_docker_default}
