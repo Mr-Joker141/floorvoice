@@ -66,6 +66,23 @@
           <img id="photo-thumb" class="photo-thumb" alt="Photo being read" hidden>
           <input id="photo-input" type="file" accept="image/*" capture="environment" hidden>
         </div>
+        <div id="count-row" class="count-row" hidden>
+          <div class="count-view">
+            <video id="count-video" class="count-video" playsinline muted autoplay></video>
+            <div class="count-guide" aria-hidden="true"><span class="count-arrow">→</span></div>
+            <p id="count-timer" class="count-timer" hidden>0 s</p>
+          </div>
+          <p class="count-help">Pan slowly, left to right, once. 5–15 seconds.</p>
+          <button id="count-btn" type="button" class="count-btn">● Start filming</button>
+          <input id="count-input" type="file" accept="video/*" capture="environment" hidden>
+        </div>
+        <div id="review-row" class="review-row" hidden>
+          <div class="review-pic">
+            <img id="review-img" alt="Counted frame">
+            <canvas id="review-canvas"></canvas>
+          </div>
+          <p id="review-note" class="review-note"></p>
+        </div>
         <div id="card-links"></div>
         <p id="card-meta" class="card-meta"></p>
       </div>

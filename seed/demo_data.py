@@ -129,6 +129,29 @@ OPENING_STOCK: dict[str, dict[str, float]] = {
     "Line 2": {"BRG-6201": 10, "SHF-25": 4, "GRS-EP2": 3},
 }  # fmt: skip
 
+# What SAM 3.1 looks for when an item is counted by video (Item.floorvoice_count_prompt).
+# One short noun phrase per item, describing what the camera sees, not what is inside: SAM
+# takes one concept per request, returns nothing for lists ("bolt, nut") and reads words
+# literally. On a 12-box pan "box" and "brown cardboard box" found 12/12 every run;
+# "bearing box", "small box" found nothing, "cardboard box" 9-10.
+COUNT_PROMPTS: dict[str, str] = {
+    "BRG-6201": "box", "BRG-6204": "box", "BRG-6205": "box",
+    "BRG-6305": "box", "BLT-M8X30": "bolt packet", "BLT-M10X40": "bolt packet",
+    "NUT-M8": "nut packet", "NUT-M10": "nut packet", "WSH-M8": "washer packet",
+    "SCR-M5X20": "box", "GR-SP40": "spur gear", "GR-SP60": "spur gear",
+    "SPR-C20": "coil spring", "VBT-A42": "rubber v-belt", "VBT-B50": "rubber v-belt",
+    "SHF-25": "steel shaft", "CPL-L100": "box", "SEAL-35": "oil seal",
+    "ORG-20": "o-ring packet", "GRS-EP2": "grease tub", "CHN-08B": "roller chain",
+    "SPK-08B17": "sprocket", "PLT-MS6": "steel plate", "PIN-D6": "pin packet",
+    "BSH-25": "bronze bush", "KEY-8X7": "key packet", "CLP-H20": "hose clamp",
+    "ASSY-PUMP": "pump", "ASSY-GBX": "gearbox", "ASSY-ROLL": "conveyor roller",
+}  # fmt: skip
+
+# Video-count demo: ERPNext's Stores quantity for these two items is deliberately a few
+# units above what is on the demo shelf (12 boxes of 6305, 8 coupling boxes), so the count
+# has something to correct. Seeded as a Material Issue that demo_reset keeps.
+COUNT_DEMO: dict[str, float] = {"BRG-6305": 15, "CPL-L100": 10}
+
 SUPPLIERS = [
     {"supplier_name": "Lanka Bearings & Tools", "aliases": ["Lanka Bearings"]},
     {"supplier_name": "Jaffna Industrial Supplies", "aliases": ["Jaffna Industrial"]},

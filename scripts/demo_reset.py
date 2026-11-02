@@ -1,7 +1,8 @@
 """Reset the demo ERPNext site to its freshly-seeded state before filming.
 
-Cancels every submitted Stock Entry (except the seeded opening stock) and Material Request
-(ERPNext v15 keeps cancelled stock entries: their ledger rows still link to them), deletes
+Cancels every submitted Stock Reconciliation (video counts), Stock Entry (except the seeded
+opening stock and count-demo issue) and Material Request (ERPNext v15 keeps cancelled stock
+entries: their ledger rows still link to them), deletes
 all Job Cards and Work Orders and resets their naming counters, re-runs the seed (5 work
 orders -> job cards PO-JOB00001..5; the 6 demo workers get their PINs, home lines and
 languages back) and archives the FloorVoice history, which clears every worker's history.
@@ -27,7 +28,8 @@ from server.config import get_settings
 
 BENCH_CONTAINER = os.environ.get("ERP_BENCH_CONTAINER", "nch-uat-backend")
 # Order matters: job cards before work orders.
-DOCTYPES = ["Stock Entry", "Material Request", "Job Card", "Work Order"]
+# Stock Reconciliations (video counts) first: they sit on top of the stock entries.
+DOCTYPES = ["Stock Reconciliation", "Stock Entry", "Material Request", "Job Card", "Work Order"]
 # Deleted (not just cancelled), so their numbering can restart: demo says "job card five".
 DELETE = {"Job Card", "Work Order"}
 SERIES = {"MFG-WO-2026-": 0, "PO-JOB": 0}

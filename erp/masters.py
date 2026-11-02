@@ -16,7 +16,7 @@ def split_aliases(raw: str | None) -> list[str]:
 async def load_items(erp: ErpClient) -> list[dict[str, Any]]:
     return await erp.get_list(
         "Item",
-        fields=["item_code", "item_name", "stock_uom", "voice_aliases"],
+        fields=["item_code", "item_name", "stock_uom", "voice_aliases", "floorvoice_count_prompt"],
         filters=[["disabled", "=", 0], ["is_stock_item", "=", 1]],
         limit=1000,
     )

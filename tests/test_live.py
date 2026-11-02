@@ -94,3 +94,30 @@ async def test_photo_answers_item_question(rt: Runtime, tmp_path) -> None:
     assert (mr["items"][0]["item_code"], mr["items"][0]["qty"]) == ("BRG-6205", 10)
     assert svc.store.history[-1].resolved_by == "photo"
     assert "label photo" in mr["floorvoice_remarks"] and "6205" in mr["floorvoice_remarks"]
+
+
+# A real phone clip panning across 12 labelled boxes, if one has been added; otherwise the
+# synthetic pan (tests/fixtures/sam/make_synthetic_shelf.py).
+SHELF_CLIP = next(
+    p for p in (FIXTURES / "shelf_12.mp4", FIXTURES / "shelf_12_synthetic.mp4") if p.exists()
+)
+
+
+async def test_video_count_within_one(tmp_path) -> None:
+    settings = dataclasses.replace(get_settings(), data_dir=tmp_path, video_count=True)
+    runtime = build_runtime(settings)
+    try:
+        svc = Service(settings, runtime, Store(tmp_path / "history.jsonl"))
+        r = await svc.act("count bearing 6305 in stores", "live-count")
+        assert r.kind == "count" and r.count, r.text
+        assert r.count["item_code"] == "BRG-6305"
+        t = time.monotonic()
+        review = await svc.count_video("live-count", SHELF_CLIP.read_bytes(), "video/mp4")
+        elapsed = time.monotonic() - t
+        assert review.kind == "review" and review.review, review.text
+        assert abs(review.review["counted"] - 12) <= 1, review.text
+        assert elapsed < 20
+        done = await svc.count_action("live-count", "cancel")  # review only: nothing posted
+        assert done.kind == "finish"
+    finally:
+        await runtime.aclose()

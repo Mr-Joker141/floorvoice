@@ -112,6 +112,50 @@ WORKER_FIELDS: list[dict[str, Any]] = [
      "read_only": 1},
 ]  # fmt: skip
 
+# Video stock count: what SAM looks for on Item, and worker + remarks on the reconciliation.
+COUNT_FIELDS: list[dict[str, Any]] = [
+    {"dt": "Item", "fieldname": "floorvoice_count_prompt", "label": "FloorVoice Count Prompt",
+     "fieldtype": "Data", "insert_after": "voice_aliases",
+     "description": "Short noun phrase SAM 3.1 looks for when this item is counted by video, "
+                    "e.g. 'bearing box'. Empty = count by entering the number."},
+    {"dt": "Stock Reconciliation", "fieldname": "floorvoice_worker", "label": "FloorVoice Worker",
+     "fieldtype": "Link", "options": "Employee", "insert_after": "purpose", "read_only": 1},
+    {"dt": "Stock Reconciliation", "fieldname": "floorvoice_remarks",
+     "label": "FloorVoice Remarks", "fieldtype": "Small Text", "insert_after": "floorvoice_worker",
+     "read_only": 1},
+]  # fmt: skip
+
+
+async def count_fields(erp: ErpClient) -> None:
+    for f in COUNT_FIELDS:
+        await ensure(erp, "Custom Field", f"{f['dt']}-{f['fieldname']}", f)
+
+
+async def count_prompts(erp: ErpClient) -> None:
+    for code, phrase in d.COUNT_PROMPTS.items():
+        await erp.update("Item", code, {"floorvoice_count_prompt": phrase})
+
+
+async def count_demo_stock(erp: ErpClient) -> None:
+    """Bring the COUNT_DEMO items' Stores quantity down to the demo figure, once."""
+    mark = f"{SEED_MARK}: count demo"
+    if await erp.get_list("Stock Entry", filters=[["remarks", "=", mark], ["docstatus", "=", 1]]):
+        log.info("count demo stock already set")
+        return
+    rows = [
+        {"item_code": code, "qty": d.OPENING_STOCK["Stores"][code] - target,
+         "s_warehouse": wh("Stores")}
+        for code, target in d.COUNT_DEMO.items()
+        if d.OPENING_STOCK["Stores"][code] > target
+    ]  # fmt: skip
+    se = await erp.insert(
+        "Stock Entry",
+        {"stock_entry_type": "Material Issue", "purpose": "Material Issue",
+         "company": d.COMPANY, "remarks": mark, "items": rows},
+        submit=True,
+    )  # fmt: skip
+    log.info("count demo stock %s: %s", se["name"], d.COUNT_DEMO)
+
 
 async def worker_fields(erp: ErpClient) -> None:
     for f in WORKER_FIELDS:
@@ -388,6 +432,9 @@ async def main() -> int:
         await work_orders(erp)
         await worker_fields(erp)
         await workers(erp, pin_salt())
+        await count_fields(erp)
+        await count_prompts(erp)
+        await count_demo_stock(erp)
         await bot_roles(erp)
         if "--keep-keys" not in sys.argv or not os.environ.get("ERP_API_KEY"):
             key, secret = await bot_user(erp)

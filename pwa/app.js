@@ -13,6 +13,9 @@ const el = {
   workerBtn: $("worker-btn"), settings: $("settings"), settingsName: $("settings-name"),
   settingsLine: $("settings-line"), langOverride: $("lang-override"), switchWorker: $("switch-worker"),
   pinScreen: $("pin-screen"), pinDots: $("pin-dots"), pinMsg: $("pin-msg"), pinPad: $("pin-pad"),
+  countRow: $("count-row"), countVideo: $("count-video"), countTimer: $("count-timer"),
+  countBtn: $("count-btn"), countInput: $("count-input"), reviewRow: $("review-row"),
+  reviewImg: $("review-img"), reviewCanvas: $("review-canvas"), reviewNote: $("review-note"),
 };
 
 // ---- settings: access key (?k=...), worker PIN and language override, per device -------
@@ -184,6 +187,8 @@ const STATUS = {
   error: "✗ Not posted",
   repeat: "✗ Not posted — say it again",
   undone: "↺ Cancelled in ERPNext",
+  count: "▶ Stock count — film the shelf",
+  review: "? Check the count — nothing is posted until you tap",
 };
 
 function showTranscript(text, final) {
@@ -246,7 +251,8 @@ async function undoDoc(doc, button) {
 
 const PHOTO_LABEL = { ta: "பாகத்தைக் காட்டு", si: "කොටස පෙන්වන්න", en: "Show me the part" };
 
-function showCard(kind, text, { options = [], meta = "", docs = [], photo = false, lang = "" } = {}) {
+function showCard(kind, text, { options = [], meta = "", docs = [], photo = false, lang = "",
+                                actions = [], review = null } = {}) {
   el.card.hidden = false;
   el.card.className = `card ${kind}`;
   el.cardStatus.textContent = STATUS[kind] || "";
@@ -254,13 +260,21 @@ function showCard(kind, text, { options = [], meta = "", docs = [], photo = fals
   el.cardMeta.textContent = meta;
   el.cardLinks.replaceChildren(erpLinks(docs), undoButtons(docs));
   el.options.innerHTML = "";
-  for (const opt of options) {
+  options.forEach((opt, i) => {
     const b = document.createElement("button");
     b.type = "button";
     b.textContent = opt;
-    b.addEventListener("click", () => answerTyped(opt, "chip"));
+    // Count review chips are verbs for /count-action; other chips answer the question.
+    b.addEventListener("click", () => (actions[i] ? countAction(actions[i]) : answerTyped(opt, "chip")));
     el.options.append(b);
-  }
+  });
+  if (kind !== "count") stopCamera();
+  el.countRow.hidden = kind !== "count";
+  el.countRow.classList.remove("filming");
+  el.countBtn.disabled = false;
+  el.countBtn.textContent = "● Start filming";
+  el.countTimer.hidden = true;
+  showReview(kind === "review" ? review : null);
   // Only for a question over an item; the server decides (r.photo).
   el.photoRow.hidden = !(kind === "ask" && photo);
   el.photoBtn.disabled = false;
@@ -275,15 +289,17 @@ function clearCard() {
 
 function handleResult(r) {
   awaitingAnswer = r.kind === "ask";
-  if (!awaitingAnswer) sessionId = newId();
+  // A count keeps its session through filming, review and adjusting.
+  if (!["ask", "count", "review"].includes(r.kind)) sessionId = newId();
   const timing = r.total_ms ? `${(r.total_ms / 1000).toFixed(1)} s from release`
     : `${(r.elapsed_ms / 1000).toFixed(1)} s`;
   showCard(r.kind, r.text, { options: r.options || [], meta: timing, docs: r.documents || [],
-                            photo: r.photo, lang: r.language });
+                            photo: r.photo, lang: r.language, actions: r.actions || [],
+                            review: r.review });
   el.card.scrollIntoView({ behavior: "smooth", block: "center" });
   speak(r.speech || r.text);
   if (r.kind === "done") flashButton(true, "Posted ✓");
-  else if (r.kind === "ask") setButton("idle");
+  else if (["ask", "count", "review"].includes(r.kind)) setButton("idle");
   else flashButton(false, "Not posted");
   refreshHistory();
 }
@@ -572,6 +588,161 @@ el.photoInput.addEventListener("change", async () => {
     if (thumbUrl) setTimeout(() => URL.revokeObjectURL(thumbUrl), 30000);
   }
 });
+
+// ---- stock count by video: film the shelf, review, confirm --------------------------------
+
+const MIN_CLIP_MS = 5000;
+const MAX_CLIP_MS = 15000;
+let camStream = null;
+let recorder = null;
+let filmTimer = 0;
+
+function stopCamera() {
+  clearInterval(filmTimer);
+  if (recorder && recorder.state !== "inactive") {
+    recorder.onstop = null;
+    recorder.stop();
+  }
+  recorder = null;
+  camStream?.getTracks().forEach((t) => t.stop());
+  camStream = null;
+  el.countVideo.srcObject = null;
+}
+
+function clipType() {
+  if (!window.MediaRecorder) return null;
+  const types = ["video/mp4;codecs=avc1", "video/mp4", "video/webm;codecs=vp8", "video/webm"];
+  return types.find((t) => MediaRecorder.isTypeSupported?.(t)) ?? "";
+}
+
+el.countBtn.addEventListener("click", async () => {
+  if (busy) return;
+  unlockSpeech();
+  if (recorder && recorder.state === "recording") {
+    recorder.stop(); // onstop uploads
+    return;
+  }
+  const type = clipType();
+  if (type === null) { // no MediaRecorder: the phone's own camera app
+    el.countInput.value = "";
+    el.countInput.click();
+    return;
+  }
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: "environment", width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: false,
+    });
+  } catch (e) {
+    el.cardMeta.textContent = `Camera unavailable: ${e.message}`;
+    return;
+  }
+  el.countVideo.srcObject = camStream;
+  const chunks = [];
+  recorder = new MediaRecorder(camStream, type ? { mimeType: type } : undefined);
+  recorder.ondataavailable = (ev) => ev.data.size && chunks.push(ev.data);
+  const started = performance.now();
+  recorder.onstop = () => {
+    clearInterval(filmTimer);
+    const mime = (recorder?.mimeType || type || "video/mp4").split(";")[0];
+    stopCamera();
+    uploadClip(new Blob(chunks, { type: mime }), mime);
+  };
+  recorder.start(500);
+  el.countRow.classList.add("filming");
+  el.countTimer.hidden = false;
+  el.countBtn.disabled = true;
+  el.countBtn.textContent = "■ Stop";
+  filmTimer = setInterval(() => {
+    const ms = performance.now() - started;
+    el.countTimer.textContent = `${Math.floor(ms / 1000)} s`;
+    if (ms >= MIN_CLIP_MS) el.countBtn.disabled = false;
+    if (ms >= MAX_CLIP_MS && recorder?.state === "recording") recorder.stop();
+  }, 200);
+  navigator.vibrate?.(20);
+});
+
+el.countInput.addEventListener("change", () => {
+  const file = el.countInput.files?.[0];
+  if (file) uploadClip(file, (file.type || "video/mp4").split(";")[0]);
+});
+
+async function uploadClip(blob, mime) {
+  if (busy) return;
+  busy = true;
+  setButton("busy");
+  el.countRow.classList.remove("filming");
+  el.countBtn.disabled = true;
+  el.countBtn.textContent = "Counting…";
+  el.cardMeta.textContent = "";
+  const ext = mime.includes("webm") ? "webm" : mime.includes("quicktime") ? "mov" : "mp4";
+  try {
+    const form = new FormData();
+    form.append("session_id", sessionId);
+    form.append("video", blob, `shelf.${ext}`);
+    const r = await checked(await fetch("/count-video", {
+      method: "POST", headers: headers(false), body: form,
+    }));
+    busy = false;
+    handleResult(r);
+  } catch (e) {
+    busy = false;
+    setButton("idle");
+    el.countBtn.disabled = false;
+    el.countBtn.textContent = "● Film again";
+    el.cardMeta.textContent = `Count failed: ${e.message}`;
+  }
+}
+
+function showReview(review) {
+  el.reviewRow.hidden = !review;
+  el.reviewNote.textContent = "";
+  const ctx = el.reviewCanvas.getContext("2d");
+  ctx.clearRect(0, 0, el.reviewCanvas.width, el.reviewCanvas.height);
+  el.reviewImg.closest(".review-pic").hidden = !review?.frame_url;
+  if (!review?.frame_url) return;
+  el.reviewImg.onload = () => {
+    const w = review.width || el.reviewImg.naturalWidth;
+    const h = review.height || el.reviewImg.naturalHeight;
+    el.reviewCanvas.width = w;
+    el.reviewCanvas.height = h;
+    ctx.lineWidth = Math.max(3, w / 300);
+    ctx.font = `700 ${Math.round(w / 28)}px system-ui`;
+    for (const b of review.boxes || []) {
+      ctx.strokeStyle = "#f5b301";
+      ctx.strokeRect(b.x1, b.y1, b.x2 - b.x1, b.y2 - b.y1);
+      const label = String(b.n);
+      const pad = w / 160;
+      const tw = ctx.measureText(label).width + pad * 2;
+      const th = w / 24;
+      ctx.fillStyle = "#f5b301";
+      ctx.fillRect(b.x1, b.y1, tw, th);
+      ctx.fillStyle = "#111";
+      ctx.fillText(label, b.x1 + pad, b.y1 + th * 0.8);
+    }
+  };
+  el.reviewImg.src = `${review.frame_url}?k=${encodeURIComponent(accessKey)}`;
+  const inView = (review.boxes || []).length;
+  if (review.counted != null && inView < review.counted) {
+    el.reviewNote.textContent = `This frame shows ${inView}; all ${review.counted} were tracked across the pan.`;
+  }
+}
+
+async function countAction(action) {
+  if (busy) return;
+  unlockSpeech();
+  busy = true;
+  setButton("busy");
+  try {
+    const r = await api("/count-action", { session_id: sessionId, action });
+    busy = false;
+    handleResult(r);
+  } catch (e) {
+    busy = false;
+    setButton("idle");
+    el.cardMeta.textContent = e.message;
+  }
+}
 
 // ---- history ---------------------------------------------------------------------------
 

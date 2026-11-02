@@ -53,3 +53,13 @@ If it is "Sinhala", write them in Sinhala script the same way, e.g. "කොය�
 Sinhala speech is often transcribed in Latin letters: "ivarai" = finished, "kali" = pieces, \
 "evanna" = send, "danna"/"denna" = put/give, "eken" = from, "ekata"/"-ta" = to, "mata" = to me. Keep them under 20 words, plain and spoken-style.
 """
+
+# Appended to SYSTEM_PROMPT only when video stock counting is enabled.
+COUNT_PROMPT = """
+A fourth transaction is available:
+4. Stock count (count_stock): "count X in Y", "how many X in Y", "எண்ணு", "ගණන් කරන්න" -> \
+item_code and warehouse (the worker's home warehouse from context unless they name another). \
+Never ask for or guess a quantity for a count: the worker films the shelf after this call \
+and confirms the number. Ambiguous items are asked about as usual. count_stock posts \
+nothing; do not call finish or any write tool after it.
+"""

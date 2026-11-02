@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -91,6 +92,13 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         },
     ),
     _fn(
+        "count_stock",
+        "Start a stock count of one item in one warehouse ('count bearings in stores', "
+        "'how many X in Y'). Nothing is posted: the worker films the shelf next and confirms "
+        "the number before ERPNext is updated. warehouse null = the worker's home warehouse.",
+        {"item_code": _STR, "warehouse": {**_OPT_STR, "description": "Full warehouse name"}},
+    ),
+    _fn(
         "ask_user",
         "Ask the worker ONE short clarifying question and stop. Use only when a mandatory "
         "field is missing or several masters match equally. Offer the candidates as options.",
@@ -106,6 +114,14 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
         {"summary": _STR},
     ),
 ]
+
+
+COUNT_TOOL = "count_stock"
+
+
+def tool_schemas(*, count: bool = False) -> list[dict[str, Any]]:
+    """The tools offered to Spark; count_stock only when video counting is enabled."""
+    return [t for t in TOOL_SCHEMAS if count or t["function"]["name"] != COUNT_TOOL]
 
 
 @dataclass
@@ -128,6 +144,8 @@ class ToolContext:
     # The worker who spoke (Employee name / employee_name), stamped on every document.
     worker_id: str = ""
     worker_name: str = ""
+    # Set by count_stock: what to count. The turn ends there; the worker films the shelf.
+    count_request: dict[str, Any] | None = None
 
 
 class MastersCache:
@@ -190,7 +208,9 @@ class ToolExecutor:
         company: str,
         default_warehouse: str,
         timezone: str = "Asia/Colombo",
+        count_enabled: bool = False,
     ) -> None:
+        self.count_enabled = count_enabled
         self.erp = erp
         self.cache = cache
         self.company = company
@@ -386,13 +406,72 @@ class ToolExecutor:
         ctx.posted.append(PostedDoc("Material Request", doc["name"], summary))
         return {"ok": True, "doctype": "Material Request", "name": doc["name"], "posted": summary}
 
+    # --- stock count (video) -------------------------------------------------------------
+
+    async def _bin(self, item_code: str, warehouse: str) -> tuple[float, float]:
+        """(actual_qty, valuation_rate) straight from Bin; valuation falls back to the item's."""
+        rows = await self.erp.get_list(
+            "Bin", fields=["actual_qty", "valuation_rate"],
+            filters={"item_code": item_code, "warehouse": warehouse}, limit=1,
+        )  # fmt: skip
+        qty = float(rows[0]["actual_qty"] or 0) if rows else 0.0
+        rate = float(rows[0]["valuation_rate"] or 0) if rows else 0.0
+        if not rate:
+            item = await self.erp.get_doc("Item", item_code)
+            rate = float(item.get("valuation_rate") or 0)
+        return qty, rate
+
+    async def _t_count_stock(
+        self, ctx: ToolContext, item_code: str, warehouse: str | None = None
+    ) -> dict[str, Any]:
+        if not self.count_enabled:
+            raise ToolError("stock counting is not available")
+        m = await self.cache.get()
+        item = self._item(m, item_code)
+        wh = self._wh(m, warehouse or self.default_warehouse, "warehouse")
+        system_qty, rate = await self._bin(item_code, wh)
+        prompt = str(item.get("floorvoice_count_prompt") or "").strip()
+        ctx.count_request = {
+            "item_code": item_code, "item_name": item["item_name"],
+            "stock_uom": item.get("stock_uom") or "", "warehouse": wh,
+            "warehouse_name": _short(m, wh), "system_qty": system_qty,
+            "valuation_rate": rate, "prompt": prompt,
+        }  # fmt: skip
+        return {"ok": True, "counting": f"{item['item_name']} in {_short(m, wh)}",
+                "note": "the worker films the shelf now; do not call anything else"}  # fmt: skip
+
+    async def post_reconciliation(
+        self, ctx: ToolContext, req: dict[str, Any], qty: float, note: str
+    ) -> PostedDoc:
+        """Stock Reconciliation setting req's item/warehouse to qty. Only called after the
+        worker confirmed the number on the review card; never offered to the model."""
+        if not math.isfinite(qty) or qty < 0:
+            raise ToolError("counted quantity must be zero or more")
+        doc = await self.erp.insert(
+            "Stock Reconciliation",
+            {
+                "company": self.company,
+                "purpose": "Stock Reconciliation",
+                "floorvoice_worker": ctx.worker_id or None,
+                "floorvoice_remarks": f"{self._remarks(ctx)} | {note}"[:1000],
+                "items": [{"item_code": req["item_code"], "warehouse": req["warehouse"],
+                           "qty": qty, "valuation_rate": req["valuation_rate"]}],
+            },
+            submit=True,
+        )  # fmt: skip
+        self.cache.invalidate()
+        summary = f"{req['item_name']} in {req['warehouse_name']} now {_fmt(qty)}"
+        posted = PostedDoc("Stock Reconciliation", doc["name"], summary)
+        ctx.posted.append(posted)
+        return posted
+
     # --- undo ---------------------------------------------------------------------------
 
     async def undo(self, doc: PostedDoc) -> str:
         """Reverse a document FloorVoice posted. Returns the ERPNext name now holding the
         state (differs only for an amended job card)."""
         try:
-            if doc.doctype in ("Stock Entry", "Material Request"):
+            if doc.doctype in ("Stock Entry", "Material Request", "Stock Reconciliation"):
                 await self.erp.call("frappe.client.cancel", doctype=doc.doctype, name=doc.name)
                 return doc.name
             if doc.doctype == "Job Card":

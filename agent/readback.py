@@ -11,16 +11,19 @@ DOCTYPE_SPOKEN = {
         "Stock Entry": "stock entry",
         "Job Card": "job card",
         "Material Request": "material request",
+        "Stock Reconciliation": "stock reconciliation",
     },
     "si": {
         "Stock Entry": "ස්ටොක් එන්ට්රි",
         "Job Card": "ජොබ් කාඩ්",
         "Material Request": "මැටීරියල් රික්වෙස්ට්",
+        "Stock Reconciliation": "ස්ටොක් රිකන්සිලියේෂන්",
     },
     "ta": {
         "Stock Entry": "ஸ்டாக் என்ட்ரி",
         "Job Card": "ஜாப் கார்டு",
         "Material Request": "மெட்டீரியல் ரிக்வெஸ்ட்",
+        "Stock Reconciliation": "ஸ்டாக் ரிகன்சிலியேஷன்",
     },
 }
 _SEQ = re.compile(r"(\d+)$")

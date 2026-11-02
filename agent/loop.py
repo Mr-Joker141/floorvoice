@@ -17,10 +17,17 @@ from typing import Any, Literal, Protocol, TypeVar
 from openai import AsyncOpenAI
 
 from agent.normalize import normalize_numbers, reply_language
-from agent.prompt import SYSTEM_PROMPT
+from agent.prompt import COUNT_PROMPT, SYSTEM_PROMPT
 from agent.readback import readback
 from agent.resolve import candidates, code_numbers, confusable, option_items, spoken_numbers
-from agent.tools import TOOL_SCHEMAS, MastersCache, PostedDoc, ToolContext, ToolExecutor
+from agent.tools import (
+    TOOL_SCHEMAS,
+    MastersCache,
+    PostedDoc,
+    ToolContext,
+    ToolExecutor,
+    tool_schemas,
+)
 
 log = logging.getLogger(__name__)
 
@@ -93,8 +100,10 @@ class SparkCompleter:
         model: str,
         reasoning_effort: str = "low",
         hedge_after: float | None = HEDGE_AFTER_S,
+        tools: list[dict[str, Any]] | None = None,
     ):
         self.client = AsyncOpenAI(api_key=api_key, base_url=base_url, timeout=30.0)
+        self.tools = tools if tools is not None else tool_schemas()
         self.model = model
         self.reasoning_effort = reasoning_effort
         self.hedge_after = hedge_after
@@ -107,7 +116,7 @@ class SparkCompleter:
         resp = await self.client.chat.completions.create(
             model=self.model,
             messages=messages,  # type: ignore[arg-type]
-            tools=TOOL_SCHEMAS,  # type: ignore[arg-type]
+            tools=self.tools,  # type: ignore[arg-type]
             reasoning_effort=self.reasoning_effort,  # type: ignore[arg-type]
         )
         msg = resp.choices[0].message
@@ -190,12 +199,13 @@ class AgentState:
 
 @dataclass
 class AgentResult:
-    kind: Literal["done", "ask", "finish", "error"]
+    kind: Literal["done", "ask", "finish", "error", "count"]
     text: str
     speech: str = ""
     options: list[str] = field(default_factory=list)
     posted: list[PostedDoc] = field(default_factory=list)
     photo_items: list[dict[str, Any]] = field(default_factory=list)
+    count: dict[str, Any] | None = None  # kind "count": what the worker films next
 
     def __post_init__(self) -> None:
         self.speech = self.speech or self.text
@@ -209,7 +219,9 @@ class Agent:
         cache: MastersCache,
         *,
         turn_budget: float = TURN_BUDGET_S,
+        count_enabled: bool = False,
     ) -> None:
+        self.system_prompt = SYSTEM_PROMPT + (COUNT_PROMPT if count_enabled else "")
         self.completer = completer
         self.executor = executor
         self.cache = cache
@@ -243,7 +255,7 @@ class Agent:
             state.ctx.worker_id = str(worker["name"])
             state.ctx.worker_name = str(worker.get("employee_name") or worker["name"])
         state.messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": self.system_prompt},
             {
                 "role": "user",
                 "content": f"Utterance: {text}\n\nContext: "
@@ -358,6 +370,12 @@ class Agent:
                 if terminal:
                     self._tool_result(state, terminal[0].id, {"ok": False, "error": "ignored"})
                 return await self._ask(state, *confirm)
+            if state.ctx.count_request and not state.ctx.posted:
+                # The turn ends here: the worker films the shelf, then confirms the number.
+                if terminal:
+                    self._tool_result(state, terminal[0].id, {"ok": True})
+                return AgentResult("count", count_prompt(state.language, state.ctx.count_request),
+                                   count=dict(state.ctx.count_request))  # fmt: skip
             if len(state.ctx.posted) > posted_before:
                 if terminal:
                     self._tool_result(state, terminal[0].id, {"ok": True})
@@ -484,6 +502,15 @@ def _sorry(lang: str, heard: str = "") -> str:
         return prefix + "සටහන් කරන්න බැරි වුණා. බඩුව, ගණන, තැන කියලා ආයෙත් කියන්න."
     prefix = f'I heard "{heard}". ' if heard else ""
     return prefix + "I couldn't post that. Please say it again with the item, quantity and place."
+
+
+def count_prompt(lang: str, req: dict[str, Any]) -> str:
+    what = f"{req['item_name']} — {req['warehouse_name']}"
+    if lang == "ta":
+        return f"அலமாரியை மெதுவாக இடமிருந்து வலமாக படம் பிடியுங்கள்: {what}"
+    if lang == "si":
+        return f"රාක්කය සෙමින් වමේ සිට දකුණට වීඩියෝ කරන්න: {what}"
+    return f"Pan slowly across the shelf, left to right: {what}"
 
 
 def _fallback_ask(state: AgentState) -> str:

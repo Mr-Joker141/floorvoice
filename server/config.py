@@ -15,6 +15,7 @@ META_API_BASE = "https://api.meta.ai/v1"
 META_ASR_REALTIME_URL = "wss://api.meta.ai/v1/asr/realtime"
 ASR_MODEL = "muse-voice-transcribe-1.0"
 AGENT_MODEL = "muse-spark-1.3"
+SAM_MODEL = "sam-3.1"  # video stock count (pinned; Meta Model API /v1/responses)
 
 
 @dataclass(frozen=True)
@@ -30,6 +31,10 @@ class Settings:
     agent_reasoning: str
     access_key: str
     pin_salt: str  # per-site salt for worker PIN hashes (seed writes one to .env)
+    video_count: bool = False  # FEATURE_VIDEO_COUNT: count stock by filming the shelf
+    sam_model: str = SAM_MODEL
+    count_min_frames: int = 3  # an object must persist this many frames to be counted
+    count_min_area: float = 0.002  # ... and cover at least this fraction of the frame
 
 
 def get_settings() -> Settings:
@@ -45,4 +50,8 @@ def get_settings() -> Settings:
         agent_reasoning=os.environ.get("AGENT_REASONING", "low"),
         access_key=os.environ.get("FLOORVOICE_KEY", ""),
         pin_salt=os.environ.get("FLOORVOICE_PIN_SALT", ""),
+        video_count=os.environ.get("FEATURE_VIDEO_COUNT", "false").lower() in ("1", "true", "yes"),
+        sam_model=os.environ.get("SAM_MODEL", SAM_MODEL),
+        count_min_frames=int(os.environ.get("COUNT_MIN_FRAMES", "3")),
+        count_min_area=float(os.environ.get("COUNT_MIN_AREA", "0.002")),
     )
