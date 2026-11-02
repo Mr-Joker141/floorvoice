@@ -73,8 +73,8 @@ Adjust takes a spoken or typed number. Zero objects, more than 500, an error or 
 counted by entering the number. Remarks record the worker, the transcript, "counted by
 video: 12 (system 15)" and the counting parameters; the clip and review frame stay in
 `data/audio/`; Undo cancels the reconciliation (same worker, once). Measured: a 12-box pan
-counted 12 in 9 of 9 runs; on real iPhone clips, 3 of 3 sweets once, and 3 for 2 sweets plus
-an empty wrapper once. About 7–10 s of SAM time and 50–60 billed frames (~$0.01) per count.
+counted 12 in 9 of 9 runs; on real iPhone clips, 6 of 6 mugs, 3 of 3 sweets, and 3 for 2
+sweets plus an empty wrapper. About 7–10 s of SAM time and 50–60 billed frames (~$0.01) per count.
 Enabled with `FEATURE_VIDEO_COUNT=true`.
 
 ## How it works
@@ -272,7 +272,7 @@ uv run ruff check . && uv run ruff format --check .
   wrapper was counted as a sweet); panning back over the shelf counts items again; the
   count prompt has to describe what the camera sees ("bearing box" found nothing where
   "box" found every box). Always reviewed before posting. Tested on one synthetic shelf
-  clip and two real phone clips only.
+  clip and three real phone clips only (exact on two, +1 on the one with the empty wrapper).
 - ERPNext v15 only (tested on 15.122). Partial job-card quantities are logged as time logs
   and the card is submitted only when the planned quantity is reached.
 - Quick tunnels (`trycloudflare.com`) are for demos: the URL changes if the tunnel restarts.
