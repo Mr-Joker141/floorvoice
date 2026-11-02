@@ -131,8 +131,18 @@ async def count_fields(erp: ErpClient) -> None:
         await ensure(erp, "Custom Field", f"{f['dt']}-{f['fieldname']}", f)
 
 
+def count_prompt_overrides(raw: str) -> dict[str, str]:
+    """DEMO_COUNT_PROMPTS="BRG-6305=mug;CPL-L100=box": what the local demo shelf really holds
+    (e.g. mugs standing in for bearing boxes), kept across demo_reset."""
+    pairs = (p.split("=", 1) for p in raw.split(";") if "=" in p)
+    return {
+        code.strip(): phrase.strip() for code, phrase in pairs if code.strip() and phrase.strip()
+    }
+
+
 async def count_prompts(erp: ErpClient) -> None:
-    for code, phrase in d.COUNT_PROMPTS.items():
+    prompts = d.COUNT_PROMPTS | count_prompt_overrides(os.environ.get("DEMO_COUNT_PROMPTS", ""))
+    for code, phrase in prompts.items():
         await erp.update("Item", code, {"floorvoice_count_prompt": phrase})
 
 

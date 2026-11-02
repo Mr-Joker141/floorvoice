@@ -383,3 +383,11 @@ async def test_finish_after_count_posts_nothing(ex: ToolExecutor, tmp_path: Path
 def test_undo_route_accepts_reconciliation() -> None:
     doc = PostedDoc("Stock Reconciliation", "MAT-RECO-2026-00001", "x")
     assert doc.doctype in ("Stock Entry", "Material Request", "Stock Reconciliation")
+
+
+def test_demo_count_prompt_overrides() -> None:
+    from seed.seed import count_prompt_overrides
+
+    assert count_prompt_overrides("BRG-6305=mug; CPL-L100 = box ;bad;=x;Y=") == {
+        "BRG-6305": "mug", "CPL-L100": "box"}  # fmt: skip
+    assert count_prompt_overrides("") == {}
