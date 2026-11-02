@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent.loop import AgentResult, AgentState
-from agent.normalize import detect_language, reply_language, token_count
+from agent.normalize import detect_language, looks_roman_sinhala, reply_language, token_count
 from agent.runtime import Runtime, build_runtime
 from agent.tools import PostedDoc, ToolError
 from agent.vision import identify
@@ -256,12 +256,14 @@ class Service:
         typed: bool = False,
     ) -> ActResponse:
         """speech: manual language override; otherwise the worker's preferred language.
-        Typed Sinhala or Tamil letters are what the worker meant (unlike ASR output, which
-        can come back in the wrong script), so they pick the reply language.
+        Typed Sinhala or Tamil (including Sinhala in English letters, "mata bearing 10k
+        ewanna") is what the worker meant, unlike ASR output, which can come back in the
+        wrong script, so it picks the reply language.
         The worker's home line is the default destination / requesting warehouse."""
         t0 = time.monotonic()
-        if typed and detect_language(transcript) in ("si", "ta"):
-            speech = detect_language(transcript)
+        if typed:
+            written = "si" if looks_roman_sinhala(transcript) else detect_language(transcript)
+            speech = written if written in ("si", "ta") else speech
         if worker:
             home_warehouse = worker.get("floorvoice_home_warehouse") or home_warehouse
             speech = speech or worker.get("floorvoice_language") or ""

@@ -168,6 +168,9 @@ async def test_language_override_beats_worker(staffed: Masters, tmp_path) -> Non
         ("බෙයාරිං 10ක් එවන්න", 0, "Sinhala"),  # Kumar (ta) types Sinhala
         ("பத்து bearing அனுப்பு", 2, "Tamil"),  # Nimal (si) types Tamil
         ("send me ten bolts", 0, "English"),  # English text: English reply, as before
+        ("mata bearing 10k ewanna", 0, "Sinhala"),  # Kumar (ta) types Singlish
+        ("mata bearing 10k ewanna", 5, "Sinhala"),  # Sarah (en) types Singlish
+        ("give me 10k bolts", 5, "English"),
     ],
 )
 async def test_typed_script_picks_reply_language(staffed: Masters, tmp_path, text, worker,

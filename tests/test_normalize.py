@@ -1,6 +1,6 @@
 import pytest
 
-from agent.normalize import detect_language, normalize_numbers, token_count
+from agent.normalize import detect_language, looks_roman_sinhala, normalize_numbers, token_count
 
 
 @pytest.mark.parametrize(
@@ -103,3 +103,40 @@ def test_reply_language_follows_choice() -> None:
 def test_sinhala_misspellings() -> None:
     assert normalize_numbers("job card තුන ඉවරයි කැලිවිස") == "job card 3 ඉවරයි කැලි 20"
     assert normalize_numbers("line දකට") == "line 2ට"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "mata bearing 10k ewanna",
+        "mata bearing dahayak ewanna",
+        "bearing 6205 dekak line 2 ta yawanna",
+        "job card 3 iwarai kali 20k",
+        "bearing dahayak oone",
+    ],
+)
+def test_singlish_detected(text: str) -> None:
+    assert looks_roman_sinhala(text)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "send me ten bearings",
+        "move 2 bearing 6205 from stores to line 2",
+        "job card 3 completed 5 pieces",
+        "I need one bolt",
+        "give me 10k bolts",
+        "மட bearing அனுப்பு",
+        "මට බෙයාරිං එවන්න",
+    ],
+)
+def test_singlish_not_detected(text: str) -> None:
+    assert not looks_roman_sinhala(text)
+
+
+def test_singlish_count_suffix() -> None:
+    assert normalize_numbers("mata bearing 10k ewanna", sinhala_latin=True) == (
+        "mata bearing 10 ewanna"
+    )
+    assert normalize_numbers("give me 10k bolts") == "give me 10k bolts"  # English: untouched

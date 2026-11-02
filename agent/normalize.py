@@ -216,6 +216,37 @@ _SI_ROMAN_DIGITS = {"deka", "tuna", "thuna", "hatara", "hathara", "paha", "haya"
 _SI_ROMAN_GLUED = re.compile(r"^(kali|keli|kaeli)(\w+)$", re.IGNORECASE)
 
 
+# "10k" / "10ak" = 10 + the Sinhala indefinite "-ක්" ("dahayak").
+_SI_ROMAN_COUNT = re.compile(r"^(\d+)(?:k|ak|kak)$", re.IGNORECASE)
+
+# Typed "Singlish": Sinhala written in English letters ("mata bearing 10k ewanna").
+# Words that are not English, so one of them marks the sentence as Sinhala.
+SI_ROMAN_MARKERS = {
+    "mata", "mage", "mge", "api", "apita", "oya", "oyata", "eka", "ekak", "eke", "ekata",
+    "ewanna", "evanna", "ewanne", "yawanna", "yavanna", "denna", "ganna", "gannawa",
+    "genna", "gennanna", "karanna", "kala", "kalaa", "iwarai", "ivarai", "iwara",
+    "ona", "oone", "one", "onee", "ooni", "thiyenawa", "tiyenawa", "nadda", "neda", "tika",
+    "kiyak", "kochchara", "kohenda", "kohen", "gabadawe", "gabadawa", "gabadaawe", "lain",
+    "sthoor", "kali", "keli", "pahu", "aye", "ayeth", "eewa", "ewa", "meka", "ara", "hari",
+    "nemei", "naha", "nehe", "baya", "hadanna", "watenna", "wenas", "wenaskaranna",
+}  # fmt: skip
+# Also English words: count them only next to an unambiguous marker.
+_SI_ROMAN_WEAK = {"one", "ara", "hari", "ewa", "aye", "kala", "baya", "eke", "api"}
+_LATIN_WORD = re.compile(r"[a-z]+")
+
+
+def looks_roman_sinhala(text: str) -> bool:
+    """True for Sinhala typed in Latin letters: no Sinhala/Tamil script, and at least one
+    Sinhala-only word ("ewanna", "mata", "dahayak") or a "10k"-style count."""
+    if _SI_SCRIPT.search(text) or _TA_SCRIPT.search(text):
+        return False
+    words = _LATIN_WORD.findall(text.lower())
+    strong = [w for w in words if w in SI_ROMAN_MARKERS and w not in _SI_ROMAN_WEAK]
+    numbers = [w for w in words if w in SI_ROMAN_TENS or (w in SI_ROMAN_UNITS and len(w) > 4)]
+    counts = [t for t in text.split() if _SI_ROMAN_COUNT.match(t.strip(".,!?"))]
+    return bool(strong) or (bool(numbers) and bool(counts or len(words) > 1))
+
+
 def _roman_sinhala_numbers(tokens: list[str]) -> list[str]:
     def digit_run(start: int) -> tuple[str, int]:
         j, digits = start, ""
@@ -226,6 +257,9 @@ def _roman_sinhala_numbers(tokens: list[str]) -> list[str]:
 
     split: list[str] = []
     for tok in tokens:
+        if c := _SI_ROMAN_COUNT.match(tok):
+            split.append(c.group(1))  # "10k" -> 10
+            continue
         m = _SI_ROMAN_GLUED.match(tok)
         rest = m.group(2).lower() if m else ""
         if m and (rest in SI_ROMAN_TENS or rest in SI_ROMAN_UNITS):
