@@ -91,6 +91,13 @@ def test_request_shape_sends_image_as_data_url() -> None:
     assert body["reasoning_effort"] == "minimal"  # "low" ran past the 6 s budget on a phone
 
 
+def test_runtime_vision_uses_minimal_reasoning() -> None:
+    from agent.runtime import build_runtime
+
+    rt = build_runtime(get_settings())
+    assert rt.vision.reasoning_effort == "minimal"  # type: ignore[attr-defined]
+
+
 async def test_identify_times_out_to_no_match() -> None:
     async def slow(image: bytes, mime: str, items: list[dict[str, Any]]) -> PhotoMatch:
         await asyncio.sleep(1)

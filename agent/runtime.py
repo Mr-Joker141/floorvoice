@@ -33,5 +33,7 @@ def build_runtime(s: Settings) -> Runtime:
         timezone=s.erp_timezone,
     )
     completer = SparkCompleter(s.meta_api_key, META_API_BASE, AGENT_MODEL, s.agent_reasoning)
-    vision = SparkVision(s.meta_api_key, META_API_BASE, AGENT_MODEL, s.agent_reasoning)
+    # The label reader keeps its own (minimal) reasoning effort; the agent's is too slow for
+    # the 6 s photo budget.
+    vision = SparkVision(s.meta_api_key, META_API_BASE, AGENT_MODEL)
     return Runtime(erp, cache, Agent(completer, executor, cache), vision)
