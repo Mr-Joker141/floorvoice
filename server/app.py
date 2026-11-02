@@ -21,7 +21,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from agent.loop import AgentResult, AgentState
-from agent.normalize import reply_language, token_count
+from agent.normalize import detect_language, reply_language, token_count
 from agent.runtime import Runtime, build_runtime
 from agent.tools import PostedDoc, ToolError
 from agent.vision import identify
@@ -253,10 +253,15 @@ class Service:
         speech: str = "",
         audio: str = "",
         worker: dict[str, Any] | None = None,
+        typed: bool = False,
     ) -> ActResponse:
         """speech: manual language override; otherwise the worker's preferred language.
+        Typed Sinhala or Tamil letters are what the worker meant (unlike ASR output, which
+        can come back in the wrong script), so they pick the reply language.
         The worker's home line is the default destination / requesting warehouse."""
         t0 = time.monotonic()
+        if typed and detect_language(transcript) in ("si", "ta"):
+            speech = detect_language(transcript)
         if worker:
             home_warehouse = worker.get("floorvoice_home_warehouse") or home_warehouse
             speech = speech or worker.get("floorvoice_language") or ""
@@ -427,7 +432,9 @@ async def me(worker: Worker) -> dict[str, str]:
 @app.post("/act", response_model=ActResponse, dependencies=[Depends(require_key)])
 async def act(req: ActRequest, worker: Worker) -> ActResponse:
     try:
-        return await service().act(req.transcript, req.session_id, speech=req.speech, worker=worker)
+        return await service().act(
+            req.transcript, req.session_id, speech=req.speech, worker=worker, typed=True
+        )
     except AgentFailure as e:
         raise HTTPException(502, f"Agent error: {e}") from e
 

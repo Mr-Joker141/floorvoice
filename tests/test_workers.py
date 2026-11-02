@@ -162,6 +162,28 @@ async def test_language_override_beats_worker(staffed: Masters, tmp_path) -> Non
     assert ctx["language"] == "English" and ctx["home_warehouse"] == "Line 1 - FVD"
 
 
+@pytest.mark.parametrize(
+    ("text", "worker", "lang"),
+    [
+        ("බෙයාරිං 10ක් එවන්න", 0, "Sinhala"),  # Kumar (ta) types Sinhala
+        ("பத்து bearing அனுப்பு", 2, "Tamil"),  # Nimal (si) types Tamil
+        ("send me ten bolts", 0, "English"),  # English text: English reply, as before
+    ],
+)
+async def test_typed_script_picks_reply_language(staffed: Masters, tmp_path, text, worker,
+                                                 lang) -> None:  # fmt: skip
+    svc, llm = make_service(staffed, tmp_path, LlmReply(None, [call("finish", summary="ok")]))
+    await svc.act(text, "s1", worker=staffed.workers[worker], typed=True)
+    assert _context(llm)["language"] == lang
+
+
+async def test_spoken_sinhala_letters_keep_tamil_worker_language(staffed: Masters,
+                                                                 tmp_path) -> None:  # fmt: skip
+    svc, llm = make_service(staffed, tmp_path, LlmReply(None, [call("finish", summary="ok")]))
+    await svc.act("බෙයාරිං 10ක් එවන්න", "s1", worker=staffed.workers[0])  # voice: ASR may misscript
+    assert _context(llm)["language"] == "Tamil"
+
+
 async def test_worker_reaches_tool_context(staffed: Masters, tmp_path) -> None:
     svc, _ = make_service(
         staffed, tmp_path, LlmReply(None, [call("ask_user", question="How many?")])
