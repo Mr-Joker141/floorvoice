@@ -13,6 +13,7 @@ const el = {
   workerBtn: $("worker-btn"), settings: $("settings"), settingsName: $("settings-name"),
   settingsLine: $("settings-line"), langOverride: $("lang-override"), switchWorker: $("switch-worker"),
   pinScreen: $("pin-screen"), pinDots: $("pin-dots"), pinMsg: $("pin-msg"), pinPad: $("pin-pad"),
+  keyForm: $("key-form"), keyInput: $("key-input"),
   countRow: $("count-row"), countVideo: $("count-video"), countTimer: $("count-timer"),
   countBtn: $("count-btn"), countInput: $("count-input"), countNative: $("count-native"),
   reviewRow: $("review-row"),
@@ -33,12 +34,16 @@ function forget(key) {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
 
+// The key stays in the address bar (?k=) so a reload keeps it even where storage does not
+// (Safari private mode, a home-screen icon); without either, the PIN screen asks for it.
 const params = new URLSearchParams(location.search);
-if (params.get("k")) {
-  store("fv.key", params.get("k"));
-  history.replaceState(null, "", location.pathname);
+if (params.get("k")) store("fv.key", params.get("k"));
+let accessKey = params.get("k") || store("fv.key") || "";
+if (accessKey && !params.get("k")) {
+  params.set("k", accessKey);
+  history.replaceState(null, "", `${location.pathname}?${params}`);
 }
-const accessKey = params.get("k") || store("fv.key") || "";
+const KEY_MISSING = "Missing or wrong access key";
 
 const PIN_UNKNOWN = "PIN not recognised";
 let pin = store("fv.pin") || "";
@@ -97,8 +102,8 @@ async function submitPin() {
   try {
     worker = await checked(await fetch("/me", { headers: headers(false) }));
   } catch (e) {
-    if (e.message !== PIN_UNKNOWN) askPin(e.message === "Missing or wrong access key"
-      ? "This link needs an access key. Open the full link with ?k=…" : e.message);
+    if (e.message === KEY_MISSING) return askKey();
+    if (e.message !== PIN_UNKNOWN) askPin(e.message);
     el.pinDots.classList.remove("bad");
     void el.pinDots.offsetWidth; // restart the shake
     el.pinDots.classList.add("bad");
@@ -139,15 +144,35 @@ el.workerBtn.addEventListener("click", () => {
 });
 el.switchWorker.addEventListener("click", () => askPin());
 
+function askKey() {
+  askPin("Access key missing or wrong — paste it below, then enter your PIN.");
+  el.keyForm.hidden = false;
+  el.keyInput.value = "";
+}
+
+el.keyForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const k = el.keyInput.value.trim().replace(/^.*[?&]k=/, "").replace(/[&#].*$/, "");
+  if (!k) return;
+  accessKey = k;
+  store("fv.key", k);
+  params.set("k", k);
+  history.replaceState(null, "", `${location.pathname}?${params}`);
+  el.keyForm.hidden = true;
+  el.keyInput.blur();
+  el.pinMsg.textContent = "Key saved. Enter your PIN.";
+});
+
 async function startup() {
+  if (!accessKey) return askKey();
   if (!pin) return askPin();
   try {
     worker = await checked(await fetch("/me", { headers: headers(false) }));
     showWorker();
     refreshHistory();
   } catch (e) {
-    if (e.message !== PIN_UNKNOWN) showCard("error", e.message === "Missing or wrong access key"
-      ? "This link needs an access key. Open the full link with ?k=…" : `Server: ${e.message}`);
+    if (e.message === KEY_MISSING) askKey();
+    else if (e.message !== PIN_UNKNOWN) showCard("error", `Server: ${e.message}`);
   }
 }
 

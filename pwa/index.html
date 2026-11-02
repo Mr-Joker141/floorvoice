@@ -36,6 +36,11 @@
       <p class="pin-sub"><span lang="ta">உங்கள் PIN</span> · <span lang="si">ඔබේ PIN</span></p>
       <div id="pin-dots" class="pin-dots" aria-live="polite"><i></i><i></i><i></i><i></i></div>
       <p id="pin-msg" class="pin-msg" role="alert"></p>
+      <form id="key-form" class="key-form" autocomplete="off" hidden>
+        <input id="key-input" type="text" inputmode="text" autocapitalize="off" spellcheck="false"
+               placeholder="Paste the access key" aria-label="Access key">
+        <button type="submit">Save</button>
+      </form>
       <div id="pin-pad" class="pin-pad">
         <button type="button" data-k="1">1</button><button type="button" data-k="2">2</button>
         <button type="button" data-k="3">3</button><button type="button" data-k="4">4</button>
