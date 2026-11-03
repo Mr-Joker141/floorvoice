@@ -2,8 +2,8 @@
 
 Voice-first front end to ERPNext for shop-floor workers. Hold a button on a phone, say what
 happened in Tamil or English (or a mix of both), with Sinhala experimental, and a Muse Spark
-agent posts the ERPNext transaction and reads back a one-line confirmation: 2–5 s typical
-after the button is released, 6 s budget. Stock can also be counted by filming the shelf
+agent posts the ERPNext transaction and reads back a one-line confirmation: about 4–6 seconds
+after the button is released (measured on a phone over the tunnel), 6 s budget. Stock can also be counted by filming the shelf
 (SAM 3.1), with the number confirmed by the worker before ERPNext is updated.
 
 Built for the Meta Global AI Developer Hackathon (Oct 30 – Nov 4, 2026).
@@ -265,8 +265,9 @@ uv run ruff check . && uv run ruff format --check .
 - Clarifying questions follow the dominant language of the utterance: mostly-English
   code-switching gets an English question. Confirmations after a write are always in the
   utterance's script.
-- Spoken readback uses the phone's built-in speech voices; without a Tamil or Sinhala voice
-  (iPhones have no Sinhala voice) the confirmation is only shown on screen, not spoken.
+- Spoken readback uses the phone's built-in text-to-speech; Meta has no TTS model. Without
+  a Tamil or Sinhala voice (iPhones have no Sinhala voice) the confirmation is only shown on
+  screen, not spoken.
 - Worker identity: 4-digit PIN, no per-worker login. The PIN rides alongside one shared
   access key; anyone who knows a PIN can act as that worker, and `?all=1` history is open to
   any worker. History is kept in a local file.
@@ -286,3 +287,7 @@ uv run ruff check . && uv run ruff format --check .
 All FloorVoice code (server, agent, erp client, pwa, seed, scripts, tests) was written
 between Oct 30 and Nov 3, 2026. ERPNext/Frappe is a pre-existing open-source dependency
 used only via its REST API. No code from any other project was reused.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
