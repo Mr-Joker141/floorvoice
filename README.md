@@ -166,8 +166,9 @@ uv run python -m seed.seed
 scripts/dev.sh
 ```
 
-Open the printed URL on the phone once (the key is remembered), enter a worker PIN, allow
-the microphone, and hold the button while speaking.
+Open the printed URL on the phone (the `?k=` access key stays in the address bar; if it is
+ever missing, the PIN screen asks for it), enter a worker PIN, allow the microphone (and the
+camera, for photos and counts), and hold the button while speaking.
 
 The seed adds these ERPNext custom fields:
 
@@ -183,7 +184,9 @@ The seed adds these ERPNext custom fields:
 | Stock Reconciliation | `floorvoice_worker`, `floorvoice_remarks` | who counted, transcript, video vs system count and counting parameters |
 
 For the count demo the seed sets ERPNext's Stores quantity of Ball Bearing 6305 to 15 and
-Jaw Coupling L100 to 10, a few above the demo shelf (12 and 8 boxes).
+Jaw Coupling L100 to 10, a few above the demo shelf (12 and 8 boxes). If the demo shelf
+holds something else, set `DEMO_COUNT_PROMPTS` in `.env` (e.g. `BRG-6305=mug`, for mugs
+standing in for bearing boxes); the seed and `demo_reset` keep it.
 
 Demo workers (PIN → name, home line, language): 1111 Kumar Selvaraj, Line 1, Tamil ·
 2222 Priya Nadarajah, Line 2, Tamil · 3333 Nimal Perera, Line 1, Sinhala · 4444 Dilani
@@ -220,13 +223,14 @@ ERPNext login, so keep it up only while you need it.
 4. Speak the three lines in the table above, in that order. Hold the button until the end
    of the sentence; say the item number at a normal pace.
 5. The job-card line works once per reset (the card is then completed).
-6. Stock count: put 12 boxes in a single row, say "count bearing 6305 in stores", pan once
-   left to right, check the numbered boxes and tap **Post 12** (ERPNext had 15).
+6. Stock count: put 12 boxes (or the `DEMO_COUNT_PROMPTS` stand-in, e.g. 6 mugs) in a single
+   row, say "count bearing 6305 in stores", pan once left to right, check the numbered
+   objects and tap **Post** (ERPNext had 15).
 
 ## Tests
 
 ```bash
-uv run pytest                          # 203 unit tests: normaliser, resolver, ERP client and
+uv run pytest                          # 204 unit tests: normaliser, resolver, ERP client and
                                        # tools against mocked HTTP, agent loop with a scripted LLM,
                                        # photo parsing and the photo/chip resume path, worker PINs,
                                        # identity counting on recorded SAM 3.1 responses, the
@@ -241,7 +245,7 @@ uv run ruff check . && uv run ruff format --check .
 
 | Path | What |
 |---|---|
-| `server/` | FastAPI app (`/audio`, `/act`, `/clarify`, `/clarify-photo`, `/count-video`, `/count-action`, `/undo`, `/history`), Voice Transcribe client |
+| `server/` | FastAPI app (`/audio`, `/me`, `/act`, `/clarify`, `/clarify-photo`, `/count-video`, `/count-action`, `/count-frame`, `/undo`, `/history`, `/client-log` for phone-side camera errors), Voice Transcribe client |
 | `agent/` | number normalisation, master matching, tool schemas and executor, agent loop, prompt, readback, label-photo matching (`vision.py`), video counting with SAM 3.1 (`count.py`) |
 | `erp/` | async ERPNext REST client, master loaders, ASR keyword builder |
 | `pwa/` | the phone app: plain HTML/CSS/JS, AudioWorklet capture, browser speech synthesis |
