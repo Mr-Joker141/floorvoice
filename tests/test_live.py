@@ -111,6 +111,8 @@ async def test_video_count_within_one(tmp_path) -> None:
         r = await svc.act("count bearing 6305 in stores", "live-count")
         assert r.kind == "count" and r.count, r.text
         assert r.count["item_code"] == "BRG-6305"
+        # The clip shows boxes; the site's prompt may name a local stand-in (DEMO_COUNT_PROMPTS).
+        svc.store.counts["live-count"].req["prompt"] = "box"
         t = time.monotonic()
         review = await svc.count_video("live-count", SHELF_CLIP.read_bytes(), "video/mp4")
         elapsed = time.monotonic() - t
